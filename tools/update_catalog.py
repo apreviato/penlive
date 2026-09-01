@@ -64,6 +64,17 @@ def sha256_for_filename(checksum_text: str, filename: str) -> str | None:
     return None
 
 
+def version_from_checksum_file(checksum_text: str, pattern: str) -> str | None:
+    """Extract a version from a dated filename in the vendor's checksum file.
+
+    Entries whose URL is a rolling alias (Arch's `latest/archlinux-x86_64.iso`)
+    would otherwise keep a stale `version` forever: the hash gets corrected on
+    each run but the version shown in the UI silently rots.
+    """
+    m = re.search(pattern, checksum_text)
+    return m.group(1) if m else None
+
+
 def update_entry(entry: dict) -> tuple[dict, list[str]]:
     """Returns (updated_entry, list-of-change-descriptions)."""
     changes: list[str] = []
@@ -84,6 +95,13 @@ def update_entry(entry: dict) -> tuple[dict, list[str]]:
             elif found != (entry.get("sha256") or "").lower():
                 changes.append(f"sha256 {entry.get('sha256')} -> {found}")
                 entry["sha256"] = found
+
+            pattern = entry.get("version_pattern")
+            if pattern:
+                version = version_from_checksum_file(text, pattern)
+                if version and version != entry.get("version"):
+                    changes.append(f"version {entry.get('version')} -> {version}")
+                    entry["version"] = version
 
     size = fetch_size(url)
     if size and size != entry.get("size"):

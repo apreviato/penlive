@@ -20,3 +20,28 @@ export function formatEta(remainingBytes, bytesPerSecond) {
   if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
+
+export function formatUptime(seconds) {
+  if (!seconds && seconds !== 0) return '—';
+  const total = Math.floor(seconds);
+  const days = Math.floor(total / 86400);
+  const hours = Math.floor((total % 86400) / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  if (days) return `${days}d ${hours}h`;
+  if (hours) return `${hours}h ${minutes}m`;
+  return `${minutes}m`;
+}
+
+export function formatDuration(startedAt, finishedAt) {
+  if (!startedAt) return '—';
+  const end = finishedAt ?? Date.now() / 1000;
+  const seconds = Math.max(0, Math.round(end - startedAt));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
+export function formatClock(date = new Date()) {
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}

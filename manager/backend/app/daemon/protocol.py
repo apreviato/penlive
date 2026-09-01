@@ -18,8 +18,19 @@ ALLOWED_COMMANDS = {
     "write_nextboot",
     "clear_nextboot",
     "reboot",
+    "poweroff",
     "kexec_boot",
     "write_usb",
+    # Tools/plugins. `job_start` takes an operation *name* plus structured
+    # arguments — never a command line. What each name may execute is fixed by
+    # daemon/operations.py and daemon/procedures.py.
+    "job_start",
+    "job_status",
+    "job_list",
+    "job_cancel",
+    "run_operation",
+    "list_operations",
+    "set_keyboard",
 }
 
 

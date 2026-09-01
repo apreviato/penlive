@@ -122,6 +122,82 @@ async def handle_write_usb(args: dict) -> dict:
     return {"written": True}
 
 
+async def handle_poweroff(args: dict) -> dict:
+    subprocess.Popen(["systemctl", "poweroff"])
+    return {"powering_off": True}
+
+
+# ---- tools / plugin jobs ---------------------------------------------------
+# The API sends an operation name and structured args; operations.py and
+# procedures.py decide what that is allowed to execute.
+
+async def handle_job_start(args: dict) -> dict:
+    from . import jobs
+    job = jobs.start_job(args["kind"], args.get("args", {}), args.get("title", args["kind"]))
+    return job.snapshot()
+
+
+async def handle_job_status(args: dict) -> dict:
+    from . import jobs
+    job = jobs.get_job(int(args["job_id"]))
+    if job is None:
+        raise ValueError(f"no such job: {args['job_id']}")
+    return job.snapshot(log_offset=int(args.get("log_offset", 0)))
+
+
+async def handle_job_list(args: dict) -> dict:
+    from . import jobs
+    return {"jobs": jobs.list_jobs()}
+
+
+async def handle_job_cancel(args: dict) -> dict:
+    from . import jobs
+    return {"cancelled": jobs.cancel_job(int(args["job_id"]))}
+
+
+async def handle_run_operation(args: dict) -> dict:
+    """Synchronous variant for fast, read-only operations (lsblk, smartctl)."""
+    from .operations import build_argv
+    argv, _op = build_argv(args["operation"], args.get("args", {}))
+    proc = subprocess.run(argv, capture_output=True, text=True, timeout=int(args.get("timeout", 60)))
+    return {"exit_code": proc.returncode, "stdout": proc.stdout, "stderr": proc.stderr}
+
+
+async def handle_list_operations(args: dict) -> dict:
+    from .operations import OPERATIONS
+    return {
+        "operations": [
+            {
+                "name": op.name,
+                "description": op.description,
+                "destructive": op.destructive,
+                "available": op.available(),
+                "missing_tools": op.missing_tools(),
+            }
+            for op in OPERATIONS.values()
+        ]
+    }
+
+
+async def handle_set_keyboard(args: dict) -> dict:
+    """Persist the layout, and apply it to the running X session if there is one."""
+    from .operations import build_argv
+    argv, _ = build_argv("set_console_keymap", args)
+    subprocess.run(argv, capture_output=True, text=True, check=True)
+
+    layout = args.get("layout", "")
+    variant = args.get("variant") or ""
+    applied_now = False
+    setxkbmap = ["setxkbmap", layout] + (["-variant", variant] if variant else [])
+    for display in (":0",):
+        proc = subprocess.run(
+            setxkbmap, capture_output=True, text=True,
+            env={**os.environ, "DISPLAY": display},
+        )
+        applied_now = applied_now or proc.returncode == 0
+    return {"persisted": True, "applied_to_session": applied_now}
+
+
 HANDLERS = {
     "ping": handle_ping,
     "mount_image": handle_mount_image,
@@ -129,8 +205,16 @@ HANDLERS = {
     "write_nextboot": handle_write_nextboot,
     "clear_nextboot": handle_clear_nextboot,
     "reboot": handle_reboot,
+    "poweroff": handle_poweroff,
     "kexec_boot": handle_kexec_boot,
     "write_usb": handle_write_usb,
+    "job_start": handle_job_start,
+    "job_status": handle_job_status,
+    "job_list": handle_job_list,
+    "job_cancel": handle_job_cancel,
+    "run_operation": handle_run_operation,
+    "list_operations": handle_list_operations,
+    "set_keyboard": handle_set_keyboard,
 }
 
 

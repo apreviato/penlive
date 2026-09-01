@@ -40,7 +40,9 @@ cp -r "${REPO_ROOT}/manager/backend/app" "${STAGE}/backend/"
 cp "${REPO_ROOT}/manager/backend/requirements.txt" "${STAGE}/backend/"
 cp -r "${REPO_ROOT}/builder/bootstack" "${STAGE}/builder/"
 cp -r "${REPO_ROOT}/catalog" "${STAGE}/"
-cp "${REPO_ROOT}/docs/ARCHITECTURE.md" "${STAGE}/docs/" 2>/dev/null || true
+for doc in ARCHITECTURE PLUGINS BUILD ADAPTERS; do
+    cp "${REPO_ROOT}/docs/${doc}.md" "${STAGE}/docs/" 2>/dev/null || true
+done
 
 if [[ -d "${REPO_ROOT}/manager/frontend/dist" ]]; then
     mkdir -p "${STAGE}/frontend"

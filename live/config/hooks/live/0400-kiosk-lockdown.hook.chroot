@@ -1,0 +1,50 @@
+#!/bin/sh
+# Kiosk lockdown at the layers a browser cannot reach.
+#
+# Three independent escapes exist on a normal Linux desktop, and each is closed
+# here: virtual terminals (Ctrl+Alt+F2 gives a login prompt), the kernel's
+# reboot key combination, and X's zap. The window manager's own keybindings are
+# removed separately in openbox-rc.xml.
+set -e
+
+# --- 1. Virtual terminals -------------------------------------------------
+# getty@tty1 is already replaced by the kiosk unit; masking the rest means
+# Ctrl+Alt+F2..F6 land on a dead terminal instead of a login prompt.
+for n in 2 3 4 5 6; do
+    systemctl mask "getty@tty${n}.service"
+done
+systemctl mask getty.target
+systemctl mask autovt@.service
+
+# Stop logind from spawning a getty on demand when a VT is switched to.
+mkdir -p /etc/systemd/logind.conf.d
+cat > /etc/systemd/logind.conf.d/10-bootstack-kiosk.conf <<'EOF'
+[Login]
+# No getty is created when an unused VT is activated.
+NAutoVTs=0
+ReserveVT=0
+# The power button is handled by the app's own shutdown flow, which can warn
+# about downloads in progress, rather than by an immediate poweroff.
+HandlePowerKey=ignore
+HandleSuspendKey=ignore
+HandleHibernateKey=ignore
+HandleLidSwitch=ignore
+EOF
+
+# --- 2. Kernel reboot combination ----------------------------------------
+# Ctrl+Alt+Del would otherwise reboot mid-download.
+systemctl mask ctrl-alt-del.target
+
+# --- 3. X server zap ------------------------------------------------------
+# Ctrl+Alt+Backspace kills the X server, dropping the user to a bare console.
+mkdir -p /etc/X11/xorg.conf.d
+cat > /etc/X11/xorg.conf.d/10-bootstack-nozap.conf <<'EOF'
+Section "ServerFlags"
+    Option "DontZap" "true"
+EndSection
+EOF
+
+# --- 4. Console noise -----------------------------------------------------
+# Kernel messages printed over the kiosk look like a crash to a normal user.
+mkdir -p /etc/sysctl.d
+echo "kernel.printk = 3 3 3 3" > /etc/sysctl.d/20-bootstack-quiet.conf

@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Openbox configuration for the BootStack kiosk.
+
+  The point of this file is what it does NOT contain: no <keyboard> bindings
+  and no <mouse> context menus. Openbox's defaults include Alt+F4 (close),
+  Alt+Tab (switch), W-d (show desktop) and a right-click root menu — all of
+  which let a user escape the browser and reach a shell. Declaring the
+  sections empty replaces those defaults rather than adding to them.
+
+  This is the layer a web page cannot provide: Chromium never sees Alt+F4,
+  because the window manager consumes it first.
+-->
+<openbox_config xmlns="http://openbox.org/3.4/rc">
+  <resistance>
+    <strength>10</strength>
+  </resistance>
+
+  <focus>
+    <focusNew>yes</focusNew>
+    <followMouse>no</followMouse>
+    <focusLast>yes</focusLast>
+  </focus>
+
+  <placement>
+    <policy>Smart</policy>
+  </placement>
+
+  <theme>
+    <name>Clearlooks</name>
+    <!-- No titlebar buttons: nothing to click to close or minimise the kiosk. -->
+    <titleLayout></titleLayout>
+    <keepBorder>no</keepBorder>
+    <animateIconify>no</animateIconify>
+  </theme>
+
+  <desktops>
+    <!-- One desktop only; multiple desktops are another way to leave the app. -->
+    <number>1</number>
+    <firstdesk>1</firstdesk>
+    <names>
+      <name>BootStack</name>
+    </names>
+  </desktops>
+
+  <margins>
+    <top>0</top>
+    <bottom>0</bottom>
+    <left>0</left>
+    <right>0</right>
+  </margins>
+
+  <!-- Empty on purpose: replaces Openbox's default keybindings with none. -->
+  <keyboard>
+  </keyboard>
+
+  <!-- Empty on purpose: no root menu, no titlebar actions, no window dragging. -->
+  <mouse>
+    <dragThreshold>1</dragThreshold>
+    <doubleClickTime>200</doubleClickTime>
+  </mouse>
+
+  <applications>
+    <application class="*">
+      <decor>no</decor>
+      <maximized>yes</maximized>
+      <layer>normal</layer>
+    </application>
+  </applications>
+</openbox_config>

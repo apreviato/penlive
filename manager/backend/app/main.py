@@ -14,8 +14,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from . import paths
-from .routers import boot, downloads, images, mount, network, system, vm
-from .services import catalog, downloader
+from .routers import (
+    boot, downloads, images, jobs, mount, network, system, system_info, tools, vm,
+)
+from .services import catalog, downloader, keyboard
 
 log = logging.getLogger("bootstack.api")
 
@@ -27,11 +29,17 @@ async def lifespan(app: FastAPI):
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     paths.ensure_dirs()
     await downloader.resume_watchers()
+    # live-boot restores /etc from persistence, but the X session starts fresh,
+    # so the saved layout has to be re-applied on every boot.
+    await keyboard.apply_saved_layout()
     asyncio.create_task(_seed_catalog_on_startup())
     yield
 
 
 async def _seed_catalog_on_startup() -> None:
+    if paths.OFFLINE:
+        log.info("BOOTSTACK_OFFLINE set; skipping catalog refresh")
+        return
     try:
         await catalog.refresh()
     except Exception:
@@ -47,7 +55,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-for _router in (network.router, images.router, downloads.router, boot.router, vm.router, mount.router, system.router):
+for _router in (
+    network.router, images.router, downloads.router, boot.router, vm.router,
+    mount.router, system.router, system_info.router, tools.router, jobs.router,
+):
     app.include_router(_router)
 
 

@@ -1,7 +1,14 @@
+import os
 import sys
 from pathlib import Path
 
-import pytest
+# Set before any `app` import: paths.py reads these at module import time.
+# Tests must not depend on internet access, and must not pay a network
+# round-trip for every FastAPI app instance they create.
+os.environ.setdefault("BOOTSTACK_DEV", "1")
+os.environ.setdefault("BOOTSTACK_OFFLINE", "1")
+
+import pytest  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 

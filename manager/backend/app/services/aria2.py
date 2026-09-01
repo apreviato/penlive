@@ -38,11 +38,11 @@ async def _call(method: str, params: list[Any]) -> Any:
         resp.raise_for_status()
     except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout) as exc:
         raise Aria2Unavailable(
-            f"o motor de download (aria2) não está acessível em {paths.ARIA2_RPC_URL}. "
-            "Verifique o serviço bootstack-aria2."
+            f"The download engine (aria2) is not reachable at {paths.ARIA2_RPC_URL}. "
+            "Check the bootstack-aria2 service."
         ) from exc
     except httpx.HTTPStatusError as exc:
-        raise Aria2Error(f"aria2 respondeu {exc.response.status_code}") from exc
+        raise Aria2Error(f"aria2 returned HTTP {exc.response.status_code}") from exc
 
     body = resp.json()
     if "error" in body:

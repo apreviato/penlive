@@ -10,24 +10,24 @@ export default function PendingBootBanner({ pending, onClear, onReboot }) {
       <span>
         {exhausted ? (
           <>
-            <strong>{pending.image_name}</strong> falhou ao iniciar {pending.attempts} vezes e foi
-            desativado automaticamente. O Manager continua sendo iniciado normalmente.
+            <strong>{pending.image_name}</strong> failed to start {pending.attempts} times and was
+            disabled automatically. BootStack will keep starting normally.
           </>
         ) : (
           <>
-            <strong>{pending.image_name}</strong> está agendado para o próximo boot
-            {pending.attempts > 0 && ` (tentativa ${pending.attempts} de ${pending.max_attempts})`}.
+            <strong>{pending.image_name}</strong> is scheduled for the next boot
+            {pending.attempts > 0 && ` (attempt ${pending.attempts} of ${pending.max_attempts})`}.
           </>
         )}
       </span>
-      <span style={{ display: 'flex', gap: 8 }}>
+      <span className="button-row">
         {!exhausted && (
           <button className="btn btn-sm btn-primary" onClick={onReboot}>
-            Reiniciar agora
+            Restart now
           </button>
         )}
         <button className="btn btn-sm" onClick={onClear}>
-          Cancelar
+          Cancel
         </button>
       </span>
     </div>

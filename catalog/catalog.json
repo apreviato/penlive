@@ -95,7 +95,7 @@
       "id": "archlinux-latest",
       "name": "Arch Linux",
       "family": "arch",
-      "version": "2026.08.01",
+      "version": "2026.09.01",
       "architecture": "x86_64",
       "adapter": "arch",
       "sources": [
@@ -103,10 +103,11 @@
           "url": "https://geo.mirror.pkgbuild.com/iso/latest/archlinux-x86_64.iso"
         }
       ],
-      "sha256": "4e82dced1c4fd3e498b22a853f8db2a4d262d32b97e7e07d97390d9e425ffe5e",
-      "size": 1597014016,
+      "sha256": "be8458032f8105e60ee2a3067f950b6e3c007ee51b38dac50e8b48e765561c91",
+      "size": 1608286208,
       "checksum_source": "https://geo.mirror.pkgbuild.com/iso/latest/sha256sums.txt",
-      "_warning": "This URL always points at the current Arch snapshot, so its sha256 changes on every monthly release. Re-run tools/update_catalog.py after each one or downloads will fail verification.",
+      "version_pattern": "archlinux-(\\d{4}\\.\\d{2}\\.\\d{2})-x86_64\\.iso",
+      "_warning": "This URL always points at the current Arch snapshot, so its sha256 and version change on every monthly release. Re-run tools/update_catalog.py after each one or downloads will fail verification.",
       "capabilities": {
         "nativeBoot": true,
         "kexec": true,

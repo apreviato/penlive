@@ -5,6 +5,9 @@
 systemd
 systemd-sysv
 dbus
+# graphical boot splash, so the user sees a logo instead of kernel logs
+plymouth
+plymouth-themes
 
 # --- network ---
 network-manager
@@ -38,6 +41,12 @@ xinit
 openbox
 chromium
 fonts-dejavu-core
+# hides the mouse pointer when idle in the kiosk
+unclutter
+# keyboard layout database that /api/keyboard/layouts reads
+xkb-data
+console-setup
+keyboard-configuration
 
 # --- ISO handling / boot ---
 xorriso
@@ -71,3 +80,20 @@ pciutils
 usbutils
 less
 nano
+
+# --- tools/plugins (see docs/PLUGINS.md) ---
+# backup + restore: filesystem-aware imaging (copies only used blocks)
+partclone
+# file-recovery: photorec ships in the testdisk package
+testdisk
+# provisioning + general file work
+rsync
+# disk-repair: btrfs/xfs checkers alongside the ext/ntfs/fat ones already listed
+btrfs-progs
+xfsprogs
+# linux-repair: chroot lives in coreutils, but grub tooling must exist to
+# reinstall a bootloader into the mounted system
+grub2-common
+# windows-repair: ntfsfix ships in ntfs-3g (already listed above)
+lvm2
+mdadm

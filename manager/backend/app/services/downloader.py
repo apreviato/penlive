@@ -134,6 +134,9 @@ async def resume_watchers() -> None:
     restart (or crash) keeps progressing — without this, we'd just never
     notice it finished.
     """
+    if paths.OFFLINE:
+        log.info("BOOTSTACK_OFFLINE set; skipping download-watcher resume")
+        return
     try:
         active = await aria2.tell_active()
     except aria2.Aria2Error:

@@ -9,7 +9,7 @@ lb config noauto \
     --architectures amd64 \
     --binary-images iso-hybrid \
     --debian-installer none \
-    --bootappend-live "boot=live components quiet splash persistence persistence-encryption=none" \
+    --bootappend-live "boot=live components quiet splash loglevel=3 rd.systemd.show_status=false vt.global_cursor_default=0 persistence persistence-encryption=none" \
     --linux-packages "linux-image" \
     --firmware-chroot true \
     --apt-recommends false \

@@ -13,9 +13,15 @@ from typing import Any
 from .. import paths
 from . import protocol
 
+# AttributeError is in here because asyncio.open_unix_connection simply does not
+# exist on Windows. Without it, every degraded-mode request raises a 500 instead
+# of the 503 the UI knows how to display.
 _UNAVAILABLE_ERRORS = (
-    FileNotFoundError, ConnectionRefusedError, OSError, asyncio.TimeoutError, NotImplementedError,
+    FileNotFoundError, ConnectionRefusedError, OSError,
+    asyncio.TimeoutError, NotImplementedError, AttributeError,
 )
+
+HAS_UNIX_SOCKETS = hasattr(asyncio, "open_unix_connection")
 
 
 class DaemonUnavailable(RuntimeError):
@@ -25,6 +31,15 @@ class DaemonUnavailable(RuntimeError):
 async def call(cmd: str, **args: Any) -> Any:
     if cmd not in protocol.ALLOWED_COMMANDS:
         raise ValueError(f"unknown daemon command {cmd!r}")
+
+    # Short-circuit rather than waiting out the connect timeout on a platform
+    # that can never have the socket in the first place.
+    if not HAS_UNIX_SOCKETS:
+        raise DaemonUnavailable(
+            "bootstack-daemon is unavailable: this platform has no Unix domain sockets "
+            "(the daemon runs only on the live Linux system)"
+        )
+
     try:
         reader, writer = await asyncio.wait_for(
             asyncio.open_unix_connection(path=str(paths.DAEMON_SOCKET)), timeout=3

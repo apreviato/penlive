@@ -103,6 +103,49 @@ de abrir o socket, e o servidor recusa de novo ao receber. Um teste garante que
 reimplementá-las: recusa nome de partição, recusa o disco do sistema em
 execução.
 
+O mesmo princípio vale para as ferramentas (Tools): `job_start` recebe o *nome*
+de uma operação e argumentos estruturados; quem monta o argv é o daemon, em
+`daemon/operations.py`. Adicionar um plugin não amplia o que o sistema
+consegue fazer. Detalhes e o modelo de ameaça em [PLUGINS.md](PLUGINS.md).
+
+## Kiosk: por que a trava tem três camadas
+
+Fechar o navegador não basta — um usuário sai da aplicação por caminhos que o
+navegador nunca vê:
+
+| Escape | Onde é fechado |
+|---|---|
+| Ctrl+Alt+F2 (terminal virtual) | `getty@ttyN` mascarado + `NAutoVTs=0` no logind |
+| Ctrl+Alt+Del | `ctrl-alt-del.target` mascarado |
+| Ctrl+Alt+Backspace | `DontZap` no Xorg |
+| Alt+F4, Alt+Tab, menu do botão direito | `openbox-rc.xml` com `<keyboard>` e `<mouse>` vazios |
+| Ctrl+R, F12, Ctrl+O, arrastar arquivo | `src/kiosk.js` no próprio app |
+| Fechar o Chromium de algum jeito | laço `while true` no `xsession.sh` reabre |
+
+A camada do navegador é a última, não a única: o Chromium nunca recebe Alt+F4,
+porque o gerenciador de janelas consome antes. E `kiosk.js` desliga-se sozinho
+no servidor de desenvolvimento — travar reload e devtools tornaria a UI
+impossível de desenvolver.
+
+## Primeira execução
+
+`setup.state()` decide entre assistente e catálogo:
+
+```
+nunca configurou           → assistente (reason="first_run")
+já configurou, mas offline → assistente (reason="offline")
+já configurou e online     → catálogo direto
+```
+
+Teclado vem antes de rede no assistente de propósito: a tela seguinte pede uma
+senha de Wi-Fi, e digitá-la com o layout errado é uma forma confusa de falhar.
+O campo de teste existe porque é a única maneira de o usuário descobrir o
+problema antes.
+
+"Pular por enquanto" grava `setup_completed` do mesmo jeito: quem tem cabo de
+rede, ou só quer bootar uma ISO que já está no pendrive, não pode ficar preso
+numa tela de Wi-Fi todo boot.
+
 ## Adapters de boot
 
 O erro que quebra a maioria das tentativas de "GRUB que boota qualquer ISO" é

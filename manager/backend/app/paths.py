@@ -69,6 +69,10 @@ DEFAULT_CATALOG_URL = os.environ.get(
     "https://raw.githubusercontent.com/bootstack-project/catalog/main/catalog.json",
 )
 
+# Skips the catalog fetch at startup. Set by the test suite so tests neither
+# depend on internet access nor pay a network round-trip per app instance.
+OFFLINE = os.environ.get("BOOTSTACK_OFFLINE") == "1"
+
 
 def ensure_dirs() -> None:
     dirs = [BOOT_MOUNT, DATA_MOUNT, STATE_DIR, EXTRACTED_DIR, IMAGES_DIR, DOWNLOADS_TMP_DIR,
