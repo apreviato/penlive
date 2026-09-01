@@ -1,0 +1,118 @@
+{
+  "version": 1,
+  "updated_at": "2026-09-01",
+  "_comment": "Checksums and sizes were fetched from each vendor's own published checksum file on 2026-09-01 (see tools/update_catalog.py, which regenerates this file). Vendors move ISOs when they release point updates, so re-run that tool rather than hand-editing.",
+  "systems": [
+    {
+      "id": "debian-13-live-standard",
+      "name": "Debian 13 Live (standard)",
+      "family": "debian",
+      "version": "13.6.0",
+      "architecture": "amd64",
+      "adapter": "debian",
+      "sources": [
+        {
+          "url": "https://cdimage.debian.org/debian-cd/current-live/amd64/iso-hybrid/debian-live-13.6.0-amd64-standard.iso"
+        }
+      ],
+      "sha256": "00aaed9a8c77c42a6469a1a11f33765ebe3066b0331dcea6895d41d5fc591344",
+      "size": 2018148352,
+      "checksum_source": "https://cdimage.debian.org/debian-cd/current-live/amd64/iso-hybrid/SHA256SUMS",
+      "capabilities": {
+        "nativeBoot": true,
+        "kexec": true,
+        "vm": true,
+        "mount": true
+      }
+    },
+    {
+      "id": "ubuntu-26-04-server",
+      "name": "Ubuntu 26.04.1 LTS Server",
+      "family": "ubuntu",
+      "version": "26.04.1",
+      "architecture": "amd64",
+      "adapter": "ubuntu",
+      "sources": [
+        {
+          "url": "https://releases.ubuntu.com/26.04.1/ubuntu-26.04.1-live-server-amd64.iso"
+        }
+      ],
+      "sha256": "cc8a95cde20f6ced61a322420de00f10cc3c90ced545daa46cb9c1a117f1d927",
+      "size": 2927861760,
+      "checksum_source": "https://releases.ubuntu.com/26.04.1/SHA256SUMS",
+      "capabilities": {
+        "nativeBoot": true,
+        "kexec": true,
+        "vm": true,
+        "mount": true
+      }
+    },
+    {
+      "id": "proxmox-ve-9-2",
+      "name": "Proxmox VE 9.2",
+      "family": "proxmox",
+      "version": "9.2-1",
+      "architecture": "amd64",
+      "adapter": "proxmox",
+      "sources": [
+        {
+          "url": "https://enterprise.proxmox.com/iso/proxmox-ve_9.2-1.iso"
+        }
+      ],
+      "sha256": "4e88fe416df9b527624a175f24c9aa07c714d3332afb1ee3dbf3879573ef2c6c",
+      "size": 1706178560,
+      "checksum_source": "https://enterprise.proxmox.com/iso/proxmox-ve_9.2-1.iso.sha256",
+      "capabilities": {
+        "nativeBoot": true,
+        "kexec": false,
+        "vm": true,
+        "mount": true
+      }
+    },
+    {
+      "id": "fedora-44-workstation",
+      "name": "Fedora 44 Workstation",
+      "family": "fedora",
+      "version": "44-1.7",
+      "architecture": "x86_64",
+      "adapter": "fedora",
+      "sources": [
+        {
+          "url": "https://dl.fedoraproject.org/pub/fedora/linux/releases/44/Workstation/x86_64/iso/Fedora-Workstation-Live-44-1.7.x86_64.iso"
+        }
+      ],
+      "sha256": "1620295f6a00c27c3208f0c00b8ece4eab1ec69b9002152d97488bf26a426ddf",
+      "size": 2851612672,
+      "checksum_source": "https://dl.fedoraproject.org/pub/fedora/linux/releases/44/Workstation/x86_64/iso/Fedora-Workstation-44-1.7-x86_64-CHECKSUM",
+      "capabilities": {
+        "nativeBoot": true,
+        "kexec": true,
+        "vm": true,
+        "mount": true
+      }
+    },
+    {
+      "id": "archlinux-latest",
+      "name": "Arch Linux",
+      "family": "arch",
+      "version": "2026.08.01",
+      "architecture": "x86_64",
+      "adapter": "arch",
+      "sources": [
+        {
+          "url": "https://geo.mirror.pkgbuild.com/iso/latest/archlinux-x86_64.iso"
+        }
+      ],
+      "sha256": "4e82dced1c4fd3e498b22a853f8db2a4d262d32b97e7e07d97390d9e425ffe5e",
+      "size": 1597014016,
+      "checksum_source": "https://geo.mirror.pkgbuild.com/iso/latest/sha256sums.txt",
+      "_warning": "This URL always points at the current Arch snapshot, so its sha256 changes on every monthly release. Re-run tools/update_catalog.py after each one or downloads will fail verification.",
+      "capabilities": {
+        "nativeBoot": true,
+        "kexec": true,
+        "vm": true,
+        "mount": true
+      }
+    }
+  ]
+}

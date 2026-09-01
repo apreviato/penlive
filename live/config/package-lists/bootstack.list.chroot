@@ -1,0 +1,73 @@
+# Packages installed into the BootStack live system.
+# One per line; live-build passes these to apt inside the chroot.
+
+# --- init / base ---
+systemd
+systemd-sysv
+dbus
+
+# --- network ---
+network-manager
+wpasupplicant
+iw
+wireless-tools
+ca-certificates
+
+# --- firmware (Wi-Fi on real laptops needs these; pulls from the non-free-firmware
+# component enabled in auto/config) ---
+firmware-linux
+firmware-iwlwifi
+firmware-realtek
+firmware-atheros
+firmware-brcm80211
+
+# --- downloads ---
+aria2
+curl
+wget
+
+# --- manager runtime ---
+python3
+python3-venv
+python3-pip
+
+# --- UI ---
+xserver-xorg
+xserver-xorg-video-all
+xinit
+openbox
+chromium
+fonts-dejavu-core
+
+# --- ISO handling / boot ---
+xorriso
+p7zip-full
+squashfs-tools
+libarchive-tools
+grub-efi-amd64-bin
+grub-common
+kexec-tools
+
+# --- partitioning / filesystems (needed by write-usb and by the builder when
+# run from a live session) ---
+parted
+gdisk
+dosfstools
+exfatprogs
+e2fsprogs
+ntfs-3g
+cryptsetup
+
+# --- virtualization ---
+qemu-system-x86
+qemu-utils
+ovmf
+
+# --- diagnostics / recovery ---
+smartmontools
+nvme-cli
+hdparm
+pciutils
+usbutils
+less
+nano

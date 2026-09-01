@@ -1,0 +1,10 @@
+#!/bin/sh
+# Builds the manager's Python venv inside the chroot so the squashfs ships with
+# dependencies already resolved — the live system must work with no network.
+set -e
+
+python3 -m venv /opt/bootstack/venv
+/opt/bootstack/venv/bin/pip install --no-cache-dir --upgrade pip
+/opt/bootstack/venv/bin/pip install --no-cache-dir -r /opt/bootstack/backend/requirements.txt
+
+chown -R bootstack:bootstack /opt/bootstack/venv

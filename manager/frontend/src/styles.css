@@ -1,0 +1,415 @@
+/* Kiosk UI: fullscreen, dark, high-contrast, large hit targets. The primary
+   user is standing in front of an unfamiliar machine that may only have a
+   trackpad, so nothing is smaller than ~44px and nothing depends on hover. */
+
+:root {
+  --bg: #0f1115;
+  --surface: #171a21;
+  --surface-alt: #1e222b;
+  --border: #2a2f3a;
+  --text: #e8eaed;
+  --text-dim: #9aa0ac;
+  --accent: #4c8dff;
+  --accent-hover: #3d7ae8;
+  --success: #3ecf8e;
+  --warning: #e8b339;
+  --danger: #f2555a;
+  --radius: 10px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, 'DejaVu Sans', sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+/* ---- header ---- */
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 20px 0 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.header h1 {
+  font-size: 20px;
+  font-weight: 600;
+  margin: 0;
+  letter-spacing: 0.2px;
+}
+
+.header-meta {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  font-size: 14px;
+  color: var(--text-dim);
+}
+
+.net-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: none;
+}
+.dot.online {
+  background: var(--success);
+}
+.dot.offline {
+  background: var(--danger);
+}
+
+/* ---- layout ---- */
+
+.content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px 0;
+}
+
+.section-title {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--text-dim);
+  margin: 0 0 12px;
+  font-weight: 600;
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 0 20px;
+  border-top: 1px solid var(--border);
+  font-size: 14px;
+  color: var(--text-dim);
+}
+
+/* ---- buttons ---- */
+
+.btn {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: var(--surface-alt);
+  color: var(--text);
+  font-size: 15px;
+  font-family: inherit;
+  padding: 11px 18px;
+  min-height: 44px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.btn:hover:not(:disabled) {
+  border-color: #3a4150;
+  background: #262b36;
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+.btn-primary:hover:not(:disabled) {
+  background: #3d7ae8;
+  border-color: #3d7ae8;
+}
+
+.btn-danger {
+  color: var(--danger);
+  border-color: #46262a;
+}
+.btn-danger:hover:not(:disabled) {
+  background: #2a1a1d;
+  border-color: var(--danger);
+}
+
+.btn-sm {
+  font-size: 14px;
+  padding: 8px 14px;
+  min-height: 38px;
+}
+
+/* ---- cards ---- */
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px 20px;
+  margin-bottom: 12px;
+}
+
+.image-card {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.image-main {
+  flex: 1;
+  min-width: 240px;
+}
+
+.image-name {
+  font-size: 17px;
+  font-weight: 600;
+  margin: 0 0 4px;
+}
+
+.image-sub {
+  font-size: 14px;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.image-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* ---- status badges ---- */
+
+.badge {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+}
+.badge-ready,
+.badge-downloaded {
+  color: var(--success);
+  border-color: #24503f;
+  background: #14261f;
+}
+.badge-downloading {
+  color: var(--accent);
+  border-color: #2b3f63;
+  background: #151d2b;
+}
+.badge-not_downloaded {
+  color: var(--text-dim);
+  border-color: var(--border);
+  background: var(--surface-alt);
+}
+.badge-corrupted {
+  color: var(--danger);
+  border-color: #46262a;
+  background: #2a1a1d;
+}
+
+/* ---- progress ---- */
+
+.progress {
+  width: 100%;
+  height: 7px;
+  background: var(--surface-alt);
+  border-radius: 999px;
+  overflow: hidden;
+  margin: 10px 0 6px;
+}
+
+.progress-bar {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 999px;
+  transition: width 0.4s ease;
+}
+
+.progress-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- wifi list ---- */
+
+.wifi-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.wifi-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 18px;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  font: inherit;
+  color: inherit;
+}
+
+.wifi-row:hover {
+  border-color: #3a4150;
+}
+
+.wifi-row.selected {
+  border-color: var(--accent);
+}
+
+.wifi-ssid {
+  font-weight: 500;
+}
+
+.wifi-meta {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.field {
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.input {
+  flex: 1;
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font: inherit;
+  padding: 11px 14px;
+  min-height: 44px;
+}
+
+.input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* ---- banners ---- */
+
+.banner {
+  border-radius: var(--radius);
+  padding: 14px 18px;
+  margin-bottom: 16px;
+  border: 1px solid;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.banner-warning {
+  background: #2a2415;
+  border-color: #5c4a1e;
+  color: #f0d492;
+}
+
+.banner-error {
+  background: #2a1a1d;
+  border-color: #46262a;
+  color: #f5a2a5;
+}
+
+.banner-info {
+  background: #151d2b;
+  border-color: #2b3f63;
+  color: #a9c6f5;
+}
+
+.empty {
+  text-align: center;
+  color: var(--text-dim);
+  padding: 48px 20px;
+}
+
+.spinner {
+  display: inline-block;
+  width: 15px;
+  height: 15px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  vertical-align: -2px;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* The kiosk browser is the only consumer, but the same UI is meant to be
+   reachable from a phone later (docs/ARCHITECTURE.md), so it degrades to a
+   single column rather than assuming a desktop viewport. */
+@media (max-width: 640px) {
+  .app {
+    padding: 0 14px;
+  }
+  .image-card {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .image-actions .btn {
+    flex: 1;
+  }
+  .header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+}

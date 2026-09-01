@@ -1,0 +1,40 @@
+[Unit]
+Description=BootStack aria2 download engine (JSON-RPC)
+After=network.target local-fs.target
+
+[Service]
+Type=exec
+User=bootstack
+Group=bootstack
+# Its own service, not a child of the API: a download must survive an API
+# restart or crash. app/services/downloader.resume_watchers() re-attaches to
+# whatever is still running here on the next API startup.
+#
+# RPC is bound to loopback with no secret because the socket is unreachable
+# from outside the machine and the only local account that could reach it is
+# the same unprivileged user that owns the downloads.
+ExecStart=/usr/bin/aria2c \
+    --enable-rpc \
+    --rpc-listen-all=false \
+    --rpc-listen-port=6800 \
+    --dir=/data/images/.downloads \
+    --continue=true \
+    --max-concurrent-downloads=2 \
+    --max-connection-per-server=4 \
+    --split=4 \
+    --auto-file-renaming=false \
+    --allow-overwrite=true \
+    --file-allocation=none
+Restart=on-failure
+RestartSec=2
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths=/data /var/log/bootstack
+ProtectHome=yes
+ProtectKernelTunables=yes
+RestrictSUIDSGID=yes
+
+[Install]
+WantedBy=multi-user.target

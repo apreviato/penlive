@@ -1,0 +1,8 @@
+# BootStack partitions, matched by the labels builder/bootstack/disk.py writes.
+# The live root itself is handled by live-boot (squashfs + OverlayFS onto the
+# `persistence`-labelled partition), so it is deliberately absent here.
+#
+# nofail: a missing partition must not drop the machine to an emergency shell —
+# the manager detects and reports it instead, so the user still gets a UI.
+LABEL=BOOTSYS   /boot   ext4    defaults,nofail                     0 2
+LABEL=BOOTDATA  /data   exfat   defaults,nofail,uid=bootstack,gid=bootstack  0 0

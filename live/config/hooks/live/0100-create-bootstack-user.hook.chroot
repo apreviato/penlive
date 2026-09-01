@@ -1,0 +1,14 @@
+#!/bin/sh
+# The API and kiosk run as this unprivileged user; only bootstack-daemon is root.
+set -e
+
+groupadd --system bootstack || true
+useradd --system --gid bootstack --create-home --home-dir /var/lib/bootstack \
+        --shell /usr/sbin/nologin bootstack || true
+
+# kvm: lets the API launch QEMU with /dev/kvm without root (see services/vm.py).
+# netdev: lets it drive NetworkManager over D-Bus for Wi-Fi setup.
+adduser bootstack kvm || true
+adduser bootstack netdev || true
+
+install -d -o bootstack -g bootstack /var/lib/bootstack /var/log/bootstack

@@ -1,0 +1,21 @@
+# build output
+dist/
+live/build/
+manager/frontend/dist/
+manager/frontend/node_modules/
+
+# dev-mode data root (see app/paths.py)
+devdata/
+
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# runtime
+*.db
+*.sqlite3
+*.log

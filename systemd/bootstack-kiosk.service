@@ -1,0 +1,24 @@
+[Unit]
+Description=BootStack kiosk UI (X + Chromium)
+After=bootstack-api.service
+Wants=bootstack-api.service
+Conflicts=getty@tty1.service
+
+[Service]
+Type=simple
+User=bootstack
+Group=bootstack
+PAMName=login
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+StandardInput=tty
+StandardOutput=journal
+# kiosk.sh polls /api/health before launching Chromium, so a slow API start
+# shows nothing rather than a browser error page.
+ExecStart=/opt/bootstack/kiosk.sh
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
