@@ -961,7 +961,7 @@ select.input {
 }
 
 .step.active .step-num {
-  background: var(--accent);
+  background: var(--accent-solid);
   color: #fff;
 }
 

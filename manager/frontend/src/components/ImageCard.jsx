@@ -66,11 +66,14 @@ export default function ImageCard({
     setBusy(label);
     try {
       await fn();
-      onChanged();
     } catch (err) {
       onError(err.message);
     } finally {
       setBusy(null);
+      // Reload even when the action failed. A Download that errors after aria2
+      // has already taken the job would otherwise leave the card offering a
+      // Download button for a transfer that is actually running.
+      onChanged();
     }
   };
 
