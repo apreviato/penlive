@@ -1,16 +1,46 @@
 from __future__ import annotations
 
+import errno
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 
 from .. import paths, repo
-from ..adapters import NoAdapterMatched, prepare_boot
+from ..adapters import IsoParseError, NoAdapterMatched, prepare_boot
 from ..daemon import client as daemon_client
 from ..schemas import BootRequest, PendingBootOut
 from ..services import bootmanager, secureboot
 
 router = APIRouter(prefix="/api/boot", tags=["boot"])
+
+# EROFS is the one that actually bites: ext4 turns read-only after an unclean
+# unplug. EACCES/EPERM land here too when prepare-storage.sh never got to chown
+# the extraction directory.
+_NOT_WRITABLE = {errno.EROFS, errno.EACCES, errno.EPERM}
+
+
+async def _prepare_boot_recovering_readonly(iso_path: Path, extract_dir: Path, iso_rel_path: str):
+    """Extract the kernel/initrd, retrying once through a privileged remount.
+
+    A read-only PENSYS is recoverable from inside the app and has nothing to do
+    with the ISO being booted, so the user should not have to reboot to get past
+    it. If the remount itself fails the original OSError is re-raised and the
+    caller turns it into an explanation.
+    """
+    try:
+        return prepare_boot(iso_path, extract_dir, iso_rel_path)
+    except OSError as exc:
+        if exc.errno not in _NOT_WRITABLE:
+            raise
+        try:
+            await daemon_client.call("remount_boot_rw")
+        except daemon_client.DaemonUnavailable:
+            raise
+        except RuntimeError as remount_exc:
+            raise HTTPException(500, (
+                f"PenLive's boot partition is read-only and could not be recovered: {remount_exc}"
+            )) from exc
+        return prepare_boot(iso_path, extract_dir, iso_rel_path)
 
 
 @router.post("")
@@ -31,12 +61,22 @@ async def schedule_boot(body: BootRequest):
     iso_rel_path = f"images/{iso_path.name}"
     extract_dir = paths.EXTRACTED_DIR / body.image_id
     try:
-        adapter, cfg = prepare_boot(iso_path, extract_dir, iso_rel_path)
+        adapter, cfg = await _prepare_boot_recovering_readonly(iso_path, extract_dir, iso_rel_path)
     except NoAdapterMatched:
         raise HTTPException(422, "no boot adapter matched this image; try Mount or Run VM instead")
-    except PermissionError as exc:
-        raise HTTPException(500, "PenLive boot storage is not writable; rebuild the live image with the storage preparation service") from exc
-    except (OSError, ValueError) as exc:
+    except IsoParseError as exc:
+        raise HTTPException(422, f"{exc}; try Mount or Run VM instead") from exc
+    except daemon_client.DaemonUnavailable as exc:
+        raise HTTPException(503, str(exc))
+    except OSError as exc:
+        if exc.errno in _NOT_WRITABLE:
+            raise HTTPException(500, (
+                f"PenLive's boot partition ({paths.BOOT_MOUNT}) is not writable, so the kernel could "
+                "not be extracted. Restart PenLive; if that does not clear it, check the stick's "
+                "PENSYS partition with fsck from another machine."
+            )) from exc
+        raise HTTPException(422, f"could not prepare this ISO for boot: {exc}") from exc
+    except ValueError as exc:
         raise HTTPException(422, f"could not prepare this ISO for boot: {exc}") from exc
 
     if body.method not in ("auto", cfg.method):
@@ -70,12 +110,17 @@ async def schedule_boot(body: BootRequest):
             raise HTTPException(500, f"could not sign the kernel for Secure Boot: {exc}")
 
     try:
-        await bootmanager.schedule_boot(body.image_id, adapter.family, cfg, image["name"])
+        warning = await bootmanager.schedule_boot(body.image_id, adapter.family, cfg, image["name"])
     except daemon_client.DaemonUnavailable as exc:
         raise HTTPException(503, str(exc))
     except RuntimeError as exc:
         raise HTTPException(500, f"could not write the next-boot configuration: {exc}") from exc
-    return {"scheduled": True, "method": cfg.method, "signed_with_mok": signed_with_mok}
+    return {
+        "scheduled": True,
+        "method": cfg.method,
+        "signed_with_mok": signed_with_mok,
+        "warning": warning,
+    }
 
 
 @router.get("/pending", response_model=PendingBootOut | None)

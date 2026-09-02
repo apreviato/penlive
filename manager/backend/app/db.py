@@ -1,5 +1,14 @@
-"""Plain stdlib sqlite3 (sync) access. FastAPI runs `def` route handlers in a
-threadpool, so a blocking sqlite3 connection here doesn't stall the event loop.
+"""Plain stdlib sqlite3 (sync) access, one connection per thread.
+
+FastAPI runs `def` route handlers in a threadpool, but the download watchers,
+the progress WebSockets and the boot/VM routers all touch the database straight
+from the event loop. A single shared connection behind one global lock meant a
+worker thread doing a long series of writes (a rescan, or post-download
+inspection) could park the event loop on lock acquisition, freezing every
+in-flight download and leaving the next request hanging. A connection per
+thread plus WAL lets readers run while a writer commits, and sqlite's own
+busy_timeout — not a Python lock the event loop can be caught on — serialises
+the writers.
 
 Networks table is a "recently used" convenience index for the UI only — Wi-Fi
 credentials themselves live in NetworkManager's own connection profiles under
@@ -73,15 +82,28 @@ CREATE TABLE IF NOT EXISTS networks (
 );
 """
 
-_lock = threading.Lock()
-_conn: sqlite3.Connection | None = None
+# Bumped by reset_for_tests() so a thread that already holds a connection to the
+# previous DB_PATH reopens instead of quietly writing to the old file.
+_generation = 0
+_schema_lock = threading.Lock()
+_local = threading.local()
 
 
 def _connect() -> sqlite3.Connection:
     paths.DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(paths.DB_PATH, check_same_thread=False)
+    # timeout/busy_timeout: wait for another thread's write rather than failing
+    # a download update with "database is locked".
+    conn = sqlite3.connect(paths.DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA busy_timeout = 30000")
     conn.execute("PRAGMA foreign_keys = ON")
+    with _schema_lock:
+        _apply_schema(conn)
+    return conn
+
+
+def _apply_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA)
     # Existing sticks keep their SQLite database across manager upgrades.
     # CREATE TABLE IF NOT EXISTS does not add new columns, so apply the small
@@ -94,33 +116,36 @@ def _connect() -> sqlite3.Connection:
     if "inspection_error" not in columns:
         conn.execute("ALTER TABLE images ADD COLUMN inspection_error TEXT")
     conn.commit()
-    return conn
 
 
 def db() -> sqlite3.Connection:
-    global _conn
-    if _conn is None:
-        with _lock:
-            if _conn is None:
-                _conn = _connect()
-    return _conn
+    conn = getattr(_local, "conn", None)
+    if conn is not None and _local.generation == _generation:
+        return conn
+    if conn is not None:
+        conn.close()
+    conn = _connect()
+    _local.conn = conn
+    _local.generation = _generation
+    return conn
 
 
 @contextmanager
 def transaction() -> Iterator[sqlite3.Connection]:
     conn = db()
-    with _lock:
-        try:
-            yield conn
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
 
 
 def reset_for_tests() -> None:
-    """Test-only: force a fresh in-process connection (e.g. after pointing DB_PATH at a temp file)."""
-    global _conn
-    if _conn is not None:
-        _conn.close()
-    _conn = None
+    """Test-only: force a fresh connection (e.g. after pointing DB_PATH at a temp file)."""
+    global _generation
+    _generation += 1
+    conn = getattr(_local, "conn", None)
+    if conn is not None:
+        conn.close()
+        _local.conn = None

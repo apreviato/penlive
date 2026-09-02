@@ -33,6 +33,16 @@ export default function Systems({ network, onNotice, onOpenFiles, onOpenVm }) {
     load();
   }, [load]);
 
+  // Belt and braces for the per-card progress socket: if it never opens, or
+  // dies mid-transfer, the list still converges on its own instead of looking
+  // stuck until someone presses Refresh catalog.
+  const anyDownloading = images.some((image) => image.status === 'downloading');
+  useEffect(() => {
+    if (!anyDownloading) return undefined;
+    const id = setInterval(load, 2000);
+    return () => clearInterval(id);
+  }, [anyDownloading, load]);
+
   const refreshCatalog = async () => {
     setRefreshing(true);
     setError(null);

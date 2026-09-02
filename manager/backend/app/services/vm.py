@@ -11,16 +11,30 @@ import asyncio
 import logging
 import socket
 import shutil
-from dataclasses import dataclass
+import time
+from collections import deque
+from dataclasses import dataclass, field
 from pathlib import Path
 
 log = logging.getLogger("penlive.vm")
+
+# QEMU has to start, open the ISO and bind its VNC websocket before the browser
+# can attach. Connecting earlier just gets ECONNREFUSED, which reaches noVNC as
+# an unexplained "display disconnected" rather than anything actionable.
+DISPLAY_READY_TIMEOUT = 20.0
+
 
 @dataclass
 class RunningVm:
     process: asyncio.subprocess.Process
     websocket_port: int
     vnc_display: int
+    stderr: deque = field(default_factory=lambda: deque(maxlen=40))
+    drain: asyncio.Task | None = None
+
+    def failure_detail(self) -> str:
+        tail = "; ".join(line for line in self.stderr if line)
+        return f": {tail}" if tail else ""
 
 
 _running: dict[str, RunningVm] = {}
@@ -71,28 +85,77 @@ async def start(image_id: str, iso_path: str, *, memory_mib: int, cpus: int, ena
     if enable_kvm and kvm_available():
         args += ["-enable-kvm", "-cpu", "host"]
 
-    proc = await asyncio.create_subprocess_exec(*args)
-    _running[image_id] = RunningVm(proc, websocket_port, display)
+    proc = await asyncio.create_subprocess_exec(*args, stderr=asyncio.subprocess.PIPE)
+    running = RunningVm(proc, websocket_port, display)
+    # Drain stderr continuously: QEMU blocks once the pipe buffer fills, and the
+    # tail is the only useful thing to show when it refuses to start.
+    running.drain = asyncio.create_task(_drain_stderr(proc, running.stderr))
+    _running[image_id] = running
     log.info("started VM for %s (pid=%s)", image_id, proc.pid)
-    await asyncio.sleep(0.35)
-    if proc.returncode is not None:
-        _running.pop(image_id, None)
-        raise VmError(f"QEMU exited before its display became available (exit {proc.returncode})")
+
+    try:
+        await _wait_for_display(running)
+    except VmError:
+        await stop(image_id)
+        raise
     return {"pid": proc.pid, "websocket_port": websocket_port, "vnc_display": display}
 
 
+async def _drain_stderr(proc: asyncio.subprocess.Process, sink: deque) -> None:
+    if proc.stderr is None:
+        return
+    try:
+        async for line in proc.stderr:
+            text = line.decode("utf-8", "replace").rstrip()
+            if text:
+                sink.append(text)
+                log.debug("qemu: %s", text)
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # noqa: BLE001 - losing QEMU's log must never fail the VM
+        log.debug("stopped reading QEMU stderr", exc_info=True)
+
+
+async def _wait_for_display(running: RunningVm) -> None:
+    """Block until QEMU's VNC websocket actually accepts a connection."""
+    deadline = time.monotonic() + DISPLAY_READY_TIMEOUT
+    while time.monotonic() < deadline:
+        if running.process.returncode is not None:
+            raise VmError(
+                f"QEMU exited before its display became available "
+                f"(exit {running.process.returncode}){running.failure_detail()}"
+            )
+        try:
+            _reader, writer = await asyncio.open_connection("127.0.0.1", running.websocket_port)
+        except OSError:
+            await asyncio.sleep(0.15)
+            continue
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except OSError:
+            pass
+        return
+    raise VmError(
+        f"the virtual machine's display did not come up within "
+        f"{DISPLAY_READY_TIMEOUT:.0f}s{running.failure_detail()}"
+    )
+
+
 async def stop(image_id: str) -> None:
-    running = _running.get(image_id)
-    if not running or running.process.returncode is not None:
-        _running.pop(image_id, None)
+    running = _running.pop(image_id, None)
+    if not running:
         return
     proc = running.process
-    proc.terminate()
-    try:
-        await asyncio.wait_for(proc.wait(), timeout=10)
-    except asyncio.TimeoutError:
-        proc.kill()
-    _running.pop(image_id, None)
+    if proc.returncode is None:
+        proc.terminate()
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=10)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+    if running.drain:
+        running.drain.cancel()
 
 
 def is_running(image_id: str) -> bool:

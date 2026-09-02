@@ -11,18 +11,48 @@ import io
 from pathlib import Path
 
 import pycdlib
+from pycdlib import pycdlibexception
+
+from . import susp
+
+
+class IsoParseError(RuntimeError):
+    """This file's directory tree can't be read: truncated, not ISO9660, or a
+    layout pycdlib rejects.
+
+    Distinct from NoAdapterMatched, which means we read the image fine and just
+    don't know how to boot it. Both leave the ISO itself usable - the kernel's
+    iso9660 driver and qemu are far more tolerant than a userspace parser - so
+    callers downgrade capabilities rather than condemning the file.
+    """
 
 
 class IsoImage:
     def __init__(self, path: Path):
         self.path = Path(path)
         self._iso = pycdlib.PyCdlib()
-        self._iso.open(str(self.path))
+        # open_fp rather than open(): susp's CE-chain hook needs the same file
+        # object to pull chained continuation areas out of while pycdlib walks.
+        self._fp = self.path.open("rb")
+        try:
+            with susp.continuation_areas_from(self._fp):
+                self._iso.open_fp(self._fp)
+        except pycdlibexception.PyCdlibException as exc:
+            self._fp.close()
+            raise IsoParseError(f"cannot read {self.path.name} as an ISO9660 image: {exc}") from exc
+        except Exception:
+            self._fp.close()
+            raise
         self._has_joliet = bool(self._iso.joliet_vd)
         self._has_rockridge = bool(getattr(self._iso, "rock_ridge", None))
 
     def close(self) -> None:
-        self._iso.close()
+        # open_fp leaves the handle ours to close; PyCdlib.close() only closes
+        # file objects it opened itself.
+        try:
+            self._iso.close()
+        finally:
+            self._fp.close()
 
     def __enter__(self) -> "IsoImage":
         return self

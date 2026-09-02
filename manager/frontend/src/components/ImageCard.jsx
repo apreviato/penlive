@@ -19,6 +19,7 @@ export default function ImageCard({
   const [progress, setProgress] = useState(null);
   const [busy, setBusy] = useState(null);
   const socketRef = useRef(null);
+  const settleRef = useRef(null);
 
   const isDownloading = image.status === 'downloading';
 
@@ -31,21 +32,35 @@ export default function ImageCard({
     }
     if (socketRef.current) return undefined;
 
+    let closedByUs = false;
     const ws = downloadProgressSocket(image.id, (msg) => {
       setProgress(msg);
       if (msg.state === 'error') {
         onError(`${image.name}: ${msg.error || 'The download stopped unexpectedly. Try again.'}`);
         onChanged();
-      } else if (msg.state === 'complete') {
+      } else if (msg.state === 'complete' || msg.state === 'cancelled') {
         onChanged();
+        // Adapter detection runs just after the download row is finished, so
+        // look again once it has had time to flip the image to "ready".
+        clearTimeout(settleRef.current);
+        settleRef.current = setTimeout(onChanged, 3000);
       }
     });
+    // A socket that drops without a terminal message (API restart, lost Wi-Fi)
+    // used to leave the card frozen on its last progress frame until the user
+    // hit Refresh catalog. Reload instead and let the image row speak.
+    ws.onclose = () => {
+      if (!closedByUs) onChanged();
+    };
     socketRef.current = ws;
     return () => {
+      closedByUs = true;
       ws.close();
       socketRef.current = null;
     };
   }, [isDownloading, image.id, image.name, onChanged, onError]);
+
+  useEffect(() => () => clearTimeout(settleRef.current), []);
 
   const run = async (label, fn) => {
     setBusy(label);
@@ -61,11 +76,13 @@ export default function ImageCard({
 
   const scheduleBoot = (allowUnverified = false) =>
     run('boot', async () => {
-      await api.scheduleBoot(image.id, allowUnverified);
+      const result = await api.scheduleBoot(image.id, allowUnverified);
       onNotice({
         kind: 'boot',
         title: 'Scheduled for next boot',
-        message: `${image.name} will start the next time this machine reboots.`,
+        message: result?.warning
+          ? `${image.name} will start the next time this machine reboots. ${result.warning}.`
+          : `${image.name} will start the next time this machine reboots.`,
       });
     });
 

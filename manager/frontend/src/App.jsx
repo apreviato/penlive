@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from './api/client.js';
 import { installKioskLockdown, isDevServer } from './kiosk.js';
 
@@ -13,14 +13,16 @@ import Terminal from './components/Terminal.jsx';
 import VmViewer from './components/VmViewer.jsx';
 import { PenLiveMark } from './components/Icons.jsx';
 
-const TABS = [
+// VM is deliberately absent: it only appears once a machine is actually
+// running, because the tab is useless without a session behind it.
+const BASE_TABS = [
   { id: 'systems', label: 'Systems' },
   { id: 'files', label: 'Files' },
   { id: 'tools', label: 'Tools' },
   { id: 'terminal', label: 'Terminal' },
-  { id: 'vm', label: 'VM' },
   { id: 'settings', label: 'Settings' },
 ];
+const VM_TAB = { id: 'vm', label: 'VM' };
 
 export default function App() {
   const [phase, setPhase] = useState('loading'); // loading | setup | main
@@ -41,6 +43,16 @@ export default function App() {
     setVmSession(session);
     setTab('vm');
   };
+
+  const closeVm = () => {
+    setVmSession(null);
+    setTab((current) => (current === 'vm' ? 'systems' : current));
+  };
+
+  const tabs = useMemo(
+    () => (vmSession ? [...BASE_TABS.slice(0, -1), VM_TAB, BASE_TABS.at(-1)] : BASE_TABS),
+    [vmSession]
+  );
 
   // Lock the page down in the kiosk, but never on the dev server — locking out
   // reload and devtools would make the UI impossible to work on.
@@ -131,7 +143,7 @@ export default function App() {
       <StatusBar
         sysinfo={sysinfo}
         network={network}
-        tabs={TABS}
+        tabs={tabs}
         activeTab={tab}
         onSelectTab={setTab}
         onOpenNetwork={() => setTab('settings')}
@@ -143,7 +155,7 @@ export default function App() {
       {tab === 'files' && <FileManager onNotice={setNotice} target={fileTarget} />}
       {tab === 'tools' && <Tools />}
       {tab === 'terminal' && <Terminal />}
-      {tab === 'vm' && <VmViewer session={vmSession} onClosed={() => setVmSession(null)} />}
+      {tab === 'vm' && <VmViewer session={vmSession} onClosed={closeVm} />}
       {tab === 'settings' && (
         <SettingsPanel
           sysinfo={sysinfo}

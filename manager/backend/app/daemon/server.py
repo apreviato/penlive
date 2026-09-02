@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -24,6 +25,10 @@ SOCKET_GROUP = os.environ.get("PENLIVE_SOCKET_GROUP", "penlive")
 KEYBOARD_CONFIG = Path(os.environ.get("PENLIVE_KEYBOARD_CONFIG", "/etc/default/keyboard"))
 PENLIVE_HOME = Path(os.environ.get("PENLIVE_HOME", "/var/lib/penlive"))
 DRIVE_MOUNTS = Path(os.environ.get("PENLIVE_DRIVE_MOUNTS", "/run/penlive/drives"))
+
+# ntfs-3g on an encrypted or unclean volume can sit for minutes, and the daemon
+# handles one request at a time, so an unbounded mount blocks everything else.
+MOUNT_TIMEOUT_SECONDS = 60
 
 
 def _builder_safety():
@@ -81,24 +86,34 @@ async def handle_mount_device(args: dict) -> dict:
 
     device = require_partition(args)
     label_proc = subprocess.run(
-        ["blkid", "-o", "value", "-s", "LABEL", device], capture_output=True, text=True
+        ["blkid", "-o", "value", "-s", "LABEL", device], capture_output=True, text=True, timeout=30
     )
     if label_proc.stdout.strip() in {"PENEFI", "PENSYS", "PENDATA", "persistence"}:
         raise ValueError("PenLive's own partitions are already managed by the system")
 
     current = subprocess.run(
-        ["findmnt", "-rn", "-S", device, "-o", "TARGET"], capture_output=True, text=True
+        ["findmnt", "-rn", "-S", device, "-o", "TARGET"], capture_output=True, text=True, timeout=30
     ).stdout.strip().splitlines()
     if current:
         return {"device": device, "mountpoint": current[0], "already_mounted": True}
 
+    type_proc = subprocess.run(
+        ["blkid", "-o", "value", "-s", "TYPE", device], capture_output=True, text=True, timeout=30
+    )
+    fstype = type_proc.stdout.strip().lower()
+
+    # BitLocker first: mount(8) has no idea what the volume is, so it hands the
+    # device to ntfs-3g, which sits there scanning encrypted bytes. Refusing up
+    # front turns a hang into an answer the user can act on.
+    if _is_bitlocker(device, fstype):
+        raise RuntimeError(
+            f"{device} is encrypted with BitLocker. Unlock the drive in Windows, or suspend "
+            "BitLocker on it, before reading it from PenLive."
+        )
+
     DRIVE_MOUNTS.mkdir(parents=True, exist_ok=True)
     mountpoint = DRIVE_MOUNTS / Path(device).name
     mountpoint.mkdir(mode=0o755, exist_ok=True)
-    type_proc = subprocess.run(
-        ["blkid", "-o", "value", "-s", "TYPE", device], capture_output=True, text=True
-    )
-    fstype = type_proc.stdout.strip().lower()
     options = ["nosuid", "nodev"]
     if fstype in {"vfat", "exfat", "ntfs", "ntfs3", "fuseblk"}:
         import grp
@@ -106,14 +121,49 @@ async def handle_mount_device(args: dict) -> dict:
         user = pwd.getpwnam("penlive")
         group = grp.getgrnam("penlive")
         options += [f"uid={user.pw_uid}", f"gid={group.gr_gid}", "umask=0022"]
-    proc = subprocess.run(
-        ["mount", "-o", ",".join(options), device, str(mountpoint)],
-        capture_output=True, text=True,
-    )
+    try:
+        proc = subprocess.run(
+            ["mount", "-o", ",".join(options), device, str(mountpoint)],
+            capture_output=True, text=True, timeout=MOUNT_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        mountpoint.rmdir()
+        raise RuntimeError(
+            f"mounting {device} did not finish within {MOUNT_TIMEOUT_SECONDS}s. The drive may be "
+            "encrypted, failing, or left unclean by Windows."
+        ) from exc
     if proc.returncode != 0:
         mountpoint.rmdir()
-        raise RuntimeError(proc.stderr.strip() or f"could not mount {device}")
+        raise RuntimeError(_mount_failure_message(device, proc.stderr.strip()))
     return {"device": device, "mountpoint": str(mountpoint), "already_mounted": False}
+
+
+# BitLocker's volume header carries this signature at offset 3, where a plain
+# NTFS volume carries "NTFS    ".
+_BITLOCKER_SIGNATURE = b"-FVE-FS-"
+
+
+def _is_bitlocker(device: str, fstype: str) -> bool:
+    if fstype in {"bitlocker", "bitlocker_fve"}:
+        return True
+    # Older libblkid reports nothing at all for a BitLocker volume, so fall back
+    # to the on-disk signature rather than trusting blkid's silence.
+    try:
+        with open(device, "rb") as fh:
+            header = fh.read(512)
+    except OSError:
+        return False
+    return header[3:11] == _BITLOCKER_SIGNATURE
+
+
+def _mount_failure_message(device: str, stderr: str) -> str:
+    lowered = stderr.lower()
+    if "hibernat" in lowered or "fast restart" in lowered or "unsafe" in lowered:
+        return (
+            f"{device} was left suspended by Windows (fast startup or hibernation). Shut Windows "
+            "down fully - not sleep or restart - and try again."
+        )
+    return stderr or f"could not mount {device}"
 
 
 async def handle_umount_device(args: dict) -> dict:
@@ -130,29 +180,88 @@ async def handle_umount_device(args: dict) -> dict:
 
 async def handle_write_nextboot(args: dict) -> dict:
     """Atomically publish the pending-boot menuentry GRUB will source next boot."""
-    paths.STATE_DIR.mkdir(parents=True, exist_ok=True)
+    try:
+        paths.STATE_DIR.mkdir(parents=True, exist_ok=True)
+        tmp_cfg = paths.NEXTBOOT_CFG.with_suffix(".cfg.tmp")
+        tmp_json = paths.NEXTBOOT_JSON.with_suffix(".json.tmp")
+        tmp_cfg.write_text(args["cfg_text"], encoding="utf-8")
+        tmp_json.write_text(args["json_text"], encoding="utf-8")
+        tmp_cfg.replace(paths.NEXTBOOT_CFG)
+        tmp_json.replace(paths.NEXTBOOT_JSON)
+    except OSError as exc:
+        raise RuntimeError(
+            f"could not write {paths.NEXTBOOT_CFG}: {exc.strerror or exc}. "
+            "The PENSYS partition may be mounted read-only or out of space."
+        ) from exc
 
-    tmp_cfg = paths.NEXTBOOT_CFG.with_suffix(".cfg.tmp")
-    tmp_json = paths.NEXTBOOT_JSON.with_suffix(".json.tmp")
-    tmp_cfg.write_text(args["cfg_text"], encoding="utf-8")
-    tmp_json.write_text(args["json_text"], encoding="utf-8")
-    tmp_cfg.replace(paths.NEXTBOOT_CFG)
-    tmp_json.replace(paths.NEXTBOOT_JSON)
-
-    _reset_boot_attempts()
-    return {}
+    return {"warning": _reset_boot_attempts()}
 
 
 async def handle_clear_nextboot(args: dict) -> dict:
     paths.NEXTBOOT_CFG.unlink(missing_ok=True)
     paths.NEXTBOOT_JSON.unlink(missing_ok=True)
-    _reset_boot_attempts()
-    return {}
+    return {"warning": _reset_boot_attempts()}
 
 
-def _reset_boot_attempts() -> None:
-    if paths.BOOTENV.exists():
-        subprocess.run(["grub-editenv", str(paths.BOOTENV), "set", "boot_attempts=0"], check=True)
+def _reset_boot_attempts() -> str | None:
+    """Zero GRUB's pending-boot watchdog counter, reporting rather than raising.
+
+    The menuentry is already published by the time this runs, so failing the
+    whole request here told the user their boot had not been scheduled when in
+    fact it had. A stale counter only suppresses the entry once it reaches 3,
+    so a warning is the honest severity.
+    """
+    if not paths.BOOTENV.exists():
+        return None  # grub.cfg defaults boot_attempts to 0 when the file is absent
+    try:
+        subprocess.run(
+            ["grub-editenv", str(paths.BOOTENV), "set", "boot_attempts=0"],
+            check=True, capture_output=True, text=True, timeout=15,
+        )
+    except FileNotFoundError:
+        return "grub-editenv is not installed, so GRUB's boot-attempt counter was not reset"
+    except subprocess.TimeoutExpired:
+        return "grub-editenv did not finish, so GRUB's boot-attempt counter was not reset"
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or "").strip() or f"exit {exc.returncode}"
+        return f"GRUB's boot-attempt counter was not reset ({detail})"
+    return None
+
+
+async def handle_remount_boot_rw(args: dict) -> dict:
+    """Bring PENSYS back read-write so a kernel can be extracted for native boot.
+
+    ext4 drops to read-only when its journal cannot be replayed, which on a USB
+    stick usually means someone pulled it out without ejecting. Everything else
+    keeps working - only /boot/extracted and /boot/state stop accepting writes -
+    so the failure surfaces as a bare EROFS the moment the user presses Boot.
+    """
+    target = str(paths.BOOT_MOUNT)
+    if not os.path.ismount(target):
+        raise RuntimeError(
+            f"{target} is not a mounted partition, so it cannot be remounted. "
+            "The PENSYS partition did not come up at boot."
+        )
+    proc = subprocess.run(
+        ["mount", "-o", "remount,rw", target], capture_output=True, text=True, timeout=30
+    )
+    if proc.returncode != 0:
+        detail = proc.stderr.strip() or f"exit {proc.returncode}"
+        raise RuntimeError(
+            f"could not remount {target} read-write: {detail}. The partition likely needs "
+            "checking with fsck from another machine."
+        )
+
+    # prepare-storage.sh only runs at boot, and it skipped these while the
+    # filesystem was read-only.
+    for path in (paths.STATE_DIR, paths.EXTRACTED_DIR):
+        path.mkdir(parents=True, exist_ok=True)
+        try:
+            shutil.chown(path, user="penlive", group="penlive")
+            path.chmod(0o775)
+        except (LookupError, OSError):
+            log.warning("remounted %s but could not reset ownership of %s", target, path)
+    return {"remounted": target}
 
 
 async def handle_reboot(args: dict) -> dict:
@@ -521,6 +630,7 @@ HANDLERS = {
     "mount_device": handle_mount_device,
     "umount_device": handle_umount_device,
     "write_nextboot": handle_write_nextboot,
+    "remount_boot_rw": handle_remount_boot_rw,
     "clear_nextboot": handle_clear_nextboot,
     "reboot": handle_reboot,
     "poweroff": handle_poweroff,

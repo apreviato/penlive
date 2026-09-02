@@ -13,7 +13,7 @@ import logging
 from pathlib import Path
 
 from .. import paths, repo
-from ..adapters import NoAdapterMatched, prepare_boot
+from ..adapters import IsoParseError, NoAdapterMatched, prepare_boot
 
 log = logging.getLogger("penlive.inspector")
 
@@ -25,8 +25,29 @@ def process_downloaded_image(image_id: str, iso_path: Path) -> None:
         adapter, _cfg = prepare_boot(iso_path, extract_dir, iso_rel_path)
     except NoAdapterMatched:
         log.warning("no boot adapter matched %s; leaving as downloaded (mount-only)", iso_path)
-        image = repo.get_image(image_id) or {}
-        capabilities = {**(image.get("capabilities") or {}), "nativeBoot": False, "mount": True, "vm": True}
-        repo.set_image_status(image_id, "downloaded", capabilities_json=json.dumps(capabilities))
-        return
-    repo.set_image_status(image_id, "ready", adapter=adapter.family)
+        _downgrade_to_mount_only(image_id)
+    except IsoParseError as exc:
+        # A verified download whose directory tree we can't parse is still a
+        # perfectly good ISO to mount or boot in a VM, so it must not end up
+        # flagged as broken over something the user can do nothing about.
+        log.warning("%s; leaving as downloaded (mount-only)", exc)
+        _downgrade_to_mount_only(image_id, error=str(exc))
+    except OSError as exc:
+        # A read-only or full PENSYS says nothing about the image. Record it, but
+        # leave nativeBoot alone: the boot router can remount and retry, and
+        # hiding the Boot button here would make that unreachable. Without this
+        # the rescan marked a perfectly good ISO "invalid".
+        log.warning("could not extract boot files from %s: %s", iso_path, exc)
+        repo.set_image_status(
+            image_id, "downloaded", inspection_error=f"could not extract boot files: {exc}"
+        )
+    else:
+        repo.set_image_status(image_id, "ready", adapter=adapter.family)
+
+
+def _downgrade_to_mount_only(image_id: str, error: str | None = None) -> None:
+    image = repo.get_image(image_id) or {}
+    capabilities = {**(image.get("capabilities") or {}), "nativeBoot": False, "mount": True, "vm": True}
+    repo.set_image_status(
+        image_id, "downloaded", capabilities_json=json.dumps(capabilities), inspection_error=error
+    )

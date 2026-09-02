@@ -93,6 +93,7 @@ export const api = {
   startVm: (imageId) =>
     request('/api/vm/start', { method: 'POST', body: JSON.stringify({ image_id: imageId }) }),
   stopVm: (imageId) => request(`/api/vm/${imageId}/stop`, { method: 'POST' }),
+  vmStatus: (imageId) => request(`/api/vm/${imageId}/status`),
   mountImage: (imageId) => request(`/api/mount/${imageId}`, { method: 'POST' }),
   unmountImage: (imageId) => request(`/api/mount/${imageId}`, { method: 'DELETE' }),
 

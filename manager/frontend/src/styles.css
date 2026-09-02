@@ -14,12 +14,20 @@
   --text: #f2f6fb;
   --text-dim: #a7b3c7;
   --text-faint: #71819b;
+  /* Bright tints: accent/danger as TEXT, borders and icons on the dark surfaces
+     (#4f9cff on #0d0f12 is 6.9:1). Filled buttons carry white text and need the
+     deeper, more saturated -solid pair instead: white on #4f9cff is only 2.8:1,
+     which is what made Boot / Download / Shut down look washed out. */
   --accent: #4f9cff;
   --accent-hover: #3888ee;
   --accent-soft: rgba(79, 156, 255, 0.14);
+  --accent-solid: #1a63e8;
+  --accent-solid-hover: #1250c8;
   --success: #3ecf8e;
   --warning: #e8b339;
   --danger: #f2555a;
+  --danger-solid: #d92d33;
+  --danger-solid-hover: #bf2027;
   --radius: 10px;
   --statusbar-h: 52px;
 }
@@ -317,14 +325,14 @@ body {
 }
 
 .btn-primary {
-  background: var(--accent);
-  border-color: var(--accent);
+  background: var(--accent-solid);
+  border-color: var(--accent-solid);
   color: #fff;
   font-weight: 600;
 }
 .btn-primary:hover:not(:disabled) {
-  background: var(--accent-hover);
-  border-color: var(--accent-hover);
+  background: var(--accent-solid-hover);
+  border-color: var(--accent-solid-hover);
 }
 
 .btn-danger {
@@ -337,13 +345,14 @@ body {
 }
 
 .btn-danger-solid {
-  background: var(--danger);
-  border-color: var(--danger);
+  background: var(--danger-solid);
+  border-color: var(--danger-solid);
   color: #fff;
   font-weight: 600;
 }
 .btn-danger-solid:hover:not(:disabled) {
-  background: #d8474c;
+  background: var(--danger-solid-hover);
+  border-color: var(--danger-solid-hover);
 }
 
 .btn-sm {

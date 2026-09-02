@@ -19,6 +19,9 @@ ALLOWED_COMMANDS = {
     "umount_device",
     "write_nextboot",
     "clear_nextboot",
+    # PENSYS flips to read-only after an unclean unplug, which strands the
+    # kernel/initrd extraction the boot router depends on.
+    "remount_boot_rw",
     "reboot",
     "poweroff",
     "kexec_boot",

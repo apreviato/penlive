@@ -58,7 +58,7 @@ async def start(image_id: str) -> int:
                     image_id, "downloaded", path=str(final_path), size_bytes=final_path.stat().st_size,
                     verified=bool(image.get("sha256")), inspection_error=None,
                 )
-                await asyncio.to_thread(process_downloaded_image, image_id, final_path)
+                await _inspect(image_id, final_path)
             else:
                 await _finalize(
                     image_id, download_id, {"files": [{"path": str(staged_path)}]}, image.get("sha256")
@@ -124,8 +124,8 @@ async def _watch(image_id: str, download_row_id: int, gid: str, expected_sha256:
             state = st.get("status")
 
             if state == "error":
-                repo.finish_download(download_row_id, state="error", error=st.get("errorMessage"))
                 repo.set_image_status(image_id, "not_downloaded")
+                repo.finish_download(download_row_id, state="error", error=st.get("errorMessage"))
                 return
 
             if state == "complete":
@@ -165,14 +165,28 @@ async def _finalize(image_id: str, download_row_id: int, aria2_status: dict, exp
     paths.IMAGES_DIR.mkdir(parents=True, exist_ok=True)
     part_path.replace(final_path)
 
-    repo.finish_download(download_row_id, state="complete")
+    # Order matters: the progress WebSocket stops as soon as the download row
+    # reads "complete", and the UI reloads the image list on that message. Flip
+    # the image row first or that reload races the update and leaves the card
+    # stuck on "downloading" until the user hits Refresh catalog.
     repo.set_image_status(
         image_id, "downloaded", path=str(final_path), size_bytes=final_path.stat().st_size,
         verified=bool(expected_sha256), inspection_error=None,
     )
+    repo.finish_download(download_row_id, state="complete")
 
+    await _inspect(image_id, final_path)
+
+
+async def _inspect(image_id: str, iso_path: Path) -> None:
+    """Inspect a finished download without ever letting it undo the download.
+
+    A malformed ISO, an unreadable directory tree or a plain bug in an adapter
+    must not turn a verified file on disk into a failed job — the image stays
+    `downloaded` and the inspector downgrades its capabilities instead.
+    """
     try:
-        await asyncio.to_thread(process_downloaded_image, image_id, final_path)
+        await asyncio.to_thread(process_downloaded_image, image_id, iso_path)
     except Exception:  # noqa: BLE001 - a boot-adapter miss shouldn't undo a good, verified download
         log.exception("post-download adapter detection failed for %s", image_id)
 
@@ -193,15 +207,35 @@ def _looks_complete(path: Path, expected_sha256: str | None, expected_size: int 
 
 async def cancel(image_id: str) -> None:
     row = repo.latest_download_for_image(image_id)
-    if row and row.get("gid"):
-        try:
-            await aria2.remove(row["gid"])
-        except Exception:  # noqa: BLE001 - best-effort; it may have already finished/errored
-            pass
+
+    # Stop the watcher first. Left running it would keep polling the gid we are
+    # about to remove, see the failure and race us back to an "error" state.
     task = _active.pop(image_id, None)
     if task:
         task.cancel()
-    repo.set_image_status(image_id, "not_downloaded")
+
+    gid = row.get("gid") if row else None
+    if gid:
+        try:
+            await aria2.remove(gid)
+        except Exception:  # noqa: BLE001 - best-effort; it may have already finished/errored
+            pass
+        # aria2 keeps a stopped result for a removed gid, and start() refuses to
+        # re-add a URI while one is on file for the same path.
+        try:
+            await aria2.remove_download_result(gid)
+        except Exception:  # noqa: BLE001
+            pass
+
+    # The progress WebSocket only stops on a terminal download state, and the
+    # partial file has to go or the next Download adopts it as a resume.
+    if row:
+        repo.finish_download(row["id"], state="cancelled")
+    staged_path = paths.DOWNLOADS_TMP_DIR / f"{image_id}.iso"
+    staged_path.unlink(missing_ok=True)
+    Path(f"{staged_path}.aria2").unlink(missing_ok=True)
+
+    repo.set_image_status(image_id, "not_downloaded", path=None, size_bytes=None)
 
 
 async def resume_watchers() -> None:

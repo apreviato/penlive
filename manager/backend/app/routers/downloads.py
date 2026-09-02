@@ -56,7 +56,7 @@ async def download_progress_ws(websocket: WebSocket, image_id: str):
                     "state": row["state"],
                     "error": row["error"],
                 })
-                if row["state"] in ("complete", "error"):
+                if row["state"] in ("complete", "error", "cancelled"):
                     break
             await asyncio.sleep(1)
     except WebSocketDisconnect:

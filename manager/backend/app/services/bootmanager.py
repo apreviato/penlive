@@ -57,7 +57,13 @@ def render_menuentry(cfg: BootConfig, image_id: str, label: str) -> str:
     raise ValueError(f"unsupported boot method {cfg.method!r}")
 
 
-async def schedule_boot(image_id: str, adapter_family: str, cfg: BootConfig, label: str) -> None:
+async def schedule_boot(image_id: str, adapter_family: str, cfg: BootConfig, label: str) -> str | None:
+    """Publish the pending-boot snippet. Returns a warning if one is worth showing.
+
+    The daemon reports a non-fatal problem (a boot-attempt counter it could not
+    reset) rather than raising, because the menuentry itself is already written
+    by then - telling the user the boot failed would be plainly wrong.
+    """
     cfg_text = render_menuentry(cfg, image_id, label)
     json_text = json.dumps({
         "image_id": image_id,
@@ -66,8 +72,9 @@ async def schedule_boot(image_id: str, adapter_family: str, cfg: BootConfig, lab
         "method": cfg.method,
         "created_at": datetime.now(timezone.utc).isoformat(),
     })
-    await daemon_client.call("write_nextboot", cfg_text=cfg_text, json_text=json_text)
+    result = await daemon_client.call("write_nextboot", cfg_text=cfg_text, json_text=json_text)
     repo.create_boot(image_id, adapter_family, cfg.method)
+    return (result or {}).get("warning")
 
 
 async def clear_pending_boot() -> None:
