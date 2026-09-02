@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { api, downloadProgressSocket } from '../api/client.js';
 import { formatBytes, formatEta, formatSpeed } from '../format.js';
+import DistroLogo from './DistroLogo.jsx';
 
 const STATUS_LABEL = {
   not_downloaded: 'not downloaded',
@@ -99,6 +100,8 @@ export default function ImageCard({ image, onChanged, onError, onNotice }) {
 
   return (
     <div className="card image-card">
+      <DistroLogo family={image.family} />
+
       <div className="image-main">
         <div className="image-name">{image.name}</div>
         <div className="image-sub">

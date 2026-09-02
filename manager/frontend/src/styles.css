@@ -311,8 +311,22 @@ body {
 .image-card {
   display: flex;
   align-items: center;
-  gap: 20px;
+  gap: 18px;
   flex-wrap: wrap;
+}
+
+.distro-logo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  /* A tinted disc behind the mark keeps light-coloured logos (Mint, openSUSE)
+     legible against the dark card without needing per-distro backgrounds. */
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 6px;
+  box-sizing: content-box;
 }
 
 .image-main {

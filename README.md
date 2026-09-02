@@ -115,6 +115,13 @@ Regravar um segundo pendrive reaproveitando o build:
 sudo ./scripts/make-usb.sh --device /dev/sdb --skip-build
 ```
 
+**No Windows**, em um PowerShell como administrador — grava uma imagem pronta,
+ou constrói pelo WSL se houver uma distribuição Debian instalada:
+
+```powershell
+.\scripts\make-usb.ps1 -Image .\dist\penlive-amd64.img.zst
+```
+
 > A gravação apaga o disco inteiro. O script sempre exige que você digite o
 > caminho do dispositivo para confirmar — nem `--yes` pula essa etapa — e se
 > recusa a escrever no disco do sistema em execução.

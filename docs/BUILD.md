@@ -45,6 +45,37 @@ sudo ./scripts/make-usb.sh --data-fs ext4 --persist-mib 16384
 
 Log completo em `make-usb.log`.
 
+## No Windows
+
+`live-build` não tem equivalente no Windows, então o script do Windows cobre as
+duas coisas que o Windows realmente consegue fazer:
+
+**Gravar uma imagem já pronta** (caminho normal — alguém gera a imagem uma vez
+no Linux ou em CI, e todo mundo grava):
+
+```powershell
+.\scripts\make-usb.ps1 -Image .\dist\penlive-amd64.img.zst
+```
+
+**Construir via WSL e gravar**, se houver uma distribuição Debian/Ubuntu no WSL:
+
+```powershell
+.\scripts\make-usb.ps1 -Build
+```
+
+Precisa de PowerShell **como administrador**. As mesmas garantias do script
+Linux valem: o disco do sistema e unidades não removíveis são recusados, e a
+gravação exige digitar o número do disco. Depois de gravar, ele lê o disco de
+volta e compara byte a byte com a imagem (use `-NoVerify` para pular).
+
+Arquivos `.img.zst` são descomprimidos antes de gravar, o que precisa de
+`zstd.exe` no PATH (`winget install Facebook.Zstandard`).
+
+> `wsl --install -d Debian` instala uma distribuição adequada. O
+> `docker-desktop` que o Docker Desktop cria **não** serve — não tem apt nem
+> systemd — e o script o ignora explicitamente em vez de falhar 30 minutos
+> depois.
+
 O restante deste documento descreve os mesmos passos manualmente, útil para
 depurar uma etapa específica.
 
