@@ -6,18 +6,22 @@ from pathlib import Path
 from .arch import ArchAdapter
 from .base import BootAdapter, BootConfig
 from .debian import DebianLiveAdapter
+from .debian_installer import DebianInstallerAdapter
 from .fedora import FedoraAdapter
 from .generic import GenericEfiAdapter
 from .iso import IsoImage
 from .proxmox import ProxmoxAdapter
 from .ubuntu import UbuntuAdapter
+from .windows import WindowsAdapter
 
 # Order doesn't affect correctness (we always take the highest score) but
 # keeps ties predictable; GenericEfiAdapter's low score means it only wins
 # when nothing more specific matches.
 REGISTRY: list[BootAdapter] = [
     UbuntuAdapter(),
+    WindowsAdapter(),
     DebianLiveAdapter(),
+    DebianInstallerAdapter(),
     FedoraAdapter(),
     ArchAdapter(),
     ProxmoxAdapter(),

@@ -32,7 +32,14 @@ def fetch_text(url: str) -> str:
 
 
 def fetch_size(url: str) -> int | None:
-    """HEAD the ISO to get its real byte size (follows redirects)."""
+    """The ISO's real byte size (follows redirects).
+
+    A torrent source needs different treatment: HEAD would measure the .torrent
+    file, a few hundred KB, and quietly overwrite the ISO's size with it.
+    """
+    if url.lower().endswith(".torrent"):
+        return torrent_length(url)
+
     req = urllib.request.Request(url, method="HEAD", headers={"User-Agent": USER_AGENT})
     try:
         with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
@@ -43,23 +50,71 @@ def fetch_size(url: str) -> int | None:
         return None
 
 
-def sha256_for_filename(checksum_text: str, filename: str) -> str | None:
+def bdecode(data: bytes, pos: int = 0):
+    """Just enough bencode to read a .torrent's own metadata."""
+    kind = data[pos:pos + 1]
+    if kind == b"i":
+        end = data.index(b"e", pos)
+        return int(data[pos + 1:end]), end + 1
+    if kind == b"l":
+        out, pos = [], pos + 1
+        while data[pos:pos + 1] != b"e":
+            item, pos = bdecode(data, pos)
+            out.append(item)
+        return out, pos + 1
+    if kind == b"d":
+        out, pos = {}, pos + 1
+        while data[pos:pos + 1] != b"e":
+            key, pos = bdecode(data, pos)
+            value, pos = bdecode(data, pos)
+            out[key] = value
+        return out, pos + 1
+    colon = data.index(b":", pos)
+    length = int(data[pos:colon])
+    start = colon + 1
+    return data[start:start + length], start + length
+
+
+def torrent_length(url: str) -> int | None:
+    """Total byte size the torrent describes, read out of the .torrent itself."""
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+            meta, _ = bdecode(resp.read())
+    except Exception as exc:  # noqa: BLE001
+        print(f"  ! could not read {url}: {exc}", file=sys.stderr)
+        return None
+    info = meta.get(b"info", {})
+    if b"length" in info:
+        return int(info[b"length"])
+    return sum(int(f[b"length"]) for f in info.get(b"files", [])) or None
+
+
+def sha256_for_filename(checksum_text: str, filename: str, pattern: str | None = None) -> str | None:
     """Handles the three formats vendors actually use.
 
     1. `<hash>  <file>`         - Debian, Ubuntu (with a `*` binary marker), Arch, Proxmox .sha256
     2. `SHA256 (<file>) = <hash>` - Fedora's BSD-style, inside a PGP-signed block
+
+    `pattern` covers vendors whose download URL is an alias: openSUSE serves
+    `...-Current.iso` but its checksum file names the snapshot it currently
+    points at, so matching on the URL's own file name finds nothing.
     """
+    def matches(candidate: str) -> bool:
+        name = Path(candidate).name
+        return bool(re.fullmatch(pattern, name)) if pattern else name == filename
+
     for line in checksum_text.splitlines():
         line = line.strip()
         if not line or line.startswith("#") or line.startswith("-----"):
             continue
 
         m = re.match(r"^SHA256\s*\((.+?)\)\s*=\s*([0-9a-fA-F]{64})$", line)
-        if m and Path(m.group(1)).name == filename:
+        if m and matches(m.group(1)):
             return m.group(2).lower()
 
         m = re.match(r"^([0-9a-fA-F]{64})\s+\*?(.+)$", line)
-        if m and Path(m.group(2)).name == filename:
+        if m and matches(m.group(2)):
             return m.group(1).lower()
     return None
 
@@ -79,19 +134,31 @@ def update_entry(entry: dict) -> tuple[dict, list[str]]:
     """Returns (updated_entry, list-of-change-descriptions)."""
     changes: list[str] = []
     url = entry["sources"][0]["url"]
-    filename = Path(url).name
+    # The hash to verify belongs to the ISO the torrent delivers, and that is
+    # the name the vendor's checksum file lists — not the .torrent's.
+    filename = re.sub(r"\.torrent$", "", Path(url).name, flags=re.IGNORECASE)
     checksum_url = entry.get("checksum_source")
 
-    if checksum_url:
+    manual = bool(entry.get("checksum_manual"))
+    if manual:
+        # Microsoft publishes the Windows evaluation hashes in a PDF, not a
+        # checksum file. Re-fetching cannot help, and treating that as drift
+        # would leave the whole run permanently red, so only the size is
+        # checked — a changed size means the vendor replaced the build and the
+        # hash has to be transcribed again by hand.
+        print(f"  . hash transcribed by hand from {checksum_url}; only size is checked")
+    elif checksum_url:
         try:
             text = fetch_text(checksum_url)
         except Exception as exc:  # noqa: BLE001
             print(f"  ! checksum fetch failed for {entry['id']}: {exc}", file=sys.stderr)
             text = ""
         if text:
-            found = sha256_for_filename(text, filename)
+            name_pattern = entry.get("checksum_filename_pattern")
+            found = sha256_for_filename(text, filename, name_pattern)
             if found is None:
-                changes.append(f"{filename} NOT FOUND in {checksum_url} (vendor likely released a new version)")
+                wanted = name_pattern or filename
+                changes.append(f"{wanted} NOT FOUND in {checksum_url} (vendor likely released a new version)")
             elif found != (entry.get("sha256") or "").lower():
                 changes.append(f"sha256 {entry.get('sha256')} -> {found}")
                 entry["sha256"] = found
@@ -105,8 +172,18 @@ def update_entry(entry: dict) -> tuple[dict, list[str]]:
 
     size = fetch_size(url)
     if size and size != entry.get("size"):
-        changes.append(f"size {entry.get('size')} -> {size}")
-        entry["size"] = size
+        if manual:
+            # Writing the new size here would be worse than leaving it stale:
+            # the entry would look freshly updated while carrying a sha256 that
+            # no longer matches, and the mismatch would only surface after a
+            # multi-gigabyte download.
+            changes.append(
+                f"size {entry.get('size')} -> {size}, so its sha256 changed too — re-read "
+                f"{checksum_url} and update both by hand (NOT rewritten by --write)"
+            )
+        else:
+            changes.append(f"size {entry.get('size')} -> {size}")
+            entry["size"] = size
 
     return entry, changes
 

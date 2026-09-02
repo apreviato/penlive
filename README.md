@@ -19,8 +19,8 @@ UEFI → GRUB → Debian Live (SquashFS + OverlayFS) → FastAPI + Chromium kios
 | Debian `live-build` (packages, hooks, systemd, kiosk) | done |
 | FastAPI + SQLite backend | done |
 | Privileged daemon (Unix socket, fixed command set) | done |
-| Resumable downloads via aria2 + SHA-256 verification | done |
-| Adapters: Debian, Ubuntu, Fedora, Arch, Proxmox, generic EFI | done |
+| Resumable downloads via aria2 (HTTP and BitTorrent) + SHA-256 verification | done |
+| Adapters: Debian live, debian-installer, Ubuntu, Fedora, Arch, Proxmox, Windows, generic EFI | done |
 | React kiosk frontend | done |
 | Native boot, embedded noVNC VM, Mount, Write-to-USB | done |
 | OS-style status bar: IP, keyboard, storage, clock | done |
@@ -29,9 +29,12 @@ UEFI → GRUB → Debian Live (SquashFS + OverlayFS) → FastAPI + Chromium kios
 | 10 tools: backup, restore, SMART, repair, recovery, provisioning, hardware/network reports | done |
 | File manager for PENDATA, mounted ISOs and local/removable drives; copy/move | done |
 | Unprivileged interactive Terminal tab | done |
-| Catalog with 16 verified images across Debian/Ubuntu/Fedora/Arch/Proxmox/Mint/Rocky/Alpine | done |
+| Catalog with 38 verified images: Debian, Ubuntu and its flavours, Fedora, Arch, openSUSE, Mint, Rocky, AlmaLinux, CentOS Stream, Alpine, Kali, Proxmox, Windows 11, and the Clonezilla/GParted/SystemRescue toolkits | done |
+| Catalog search, and images already on the stick listed first | done |
+| BitTorrent downloads, for images no vendor publishes over HTTP | done |
+| Windows installation media via wimboot (needs `--wimboot` at build time) | done |
 | Secure Boot: signed boot chain + machine-owner-key signing for downloaded systems | done |
-| Windows / wimboot, A/B updates, legacy BIOS | **not implemented** — see [Scope](#scope-and-limits) |
+| A/B updates, legacy BIOS | **not implemented** — see [Scope](#scope-and-limits) |
 
 ## Quick start (development)
 
@@ -95,13 +98,14 @@ command line. See [docs/PLUGINS.md](docs/PLUGINS.md).
 make test
 ```
 
-239 tests: 46 in the builder (partitioning, safety guards, provisioning plans,
+264 tests: 46 in the builder (partitioning, safety guards, provisioning plans,
 the image path, GRUB module selection, the Secure Boot chain and the graphical
-boot handoff and runtime storage permissions) and 192 in the backend (adapters against synthetic ISOs, GRUB
-menuentry generation, SHA-256 verification, the daemon protocol, adversarial
+boot handoff and runtime storage permissions) and 218 in the backend (adapters
+against synthetic ISOs, GRUB menuentry generation including wimboot, unpacking
+Windows media, SHA-256 verification, the daemon protocol, adversarial
 validation of privileged arguments, cancellation, local ISO import, safe file
-management and cross-drive transfers, aria2 crash recovery, the job runner,
-disk inventory, the HTTP API and the catalog schema).
+management and cross-drive transfers, aria2 crash recovery including torrent
+sources, the job runner, disk inventory, the HTTP API and the catalog schema).
 
 ## Building a real stick
 
@@ -160,9 +164,9 @@ The manual steps, and how to test in QEMU before touching real hardware, are in
 ```
 GPT
 ├── p1  PENEFI       FAT32   512M   EFI/BOOT/{BOOTX64.EFI,grubx64.efi,mmx64.efi} + EFI/debian/grub.cfg
-├── p2  PENSYS       ext4    4G     live/ (kernel, initrd, squashfs) + boot/state + boot/extracted
+├── p2  PENSYS       ext4    4G     live/ (kernel, initrd, squashfs) + boot/state + boot/extracted + boot/wimboot
 ├── p3  persistence  ext4    8G     OverlayFS (live-boot) — settings, Wi-Fi
-└── p4  PENDATA      exFAT   rest   images/ (ISOs), catalog/, logs/
+└── p4  PENDATA      exFAT   rest   images/ (ISOs), windows/ (unpacked Setup media), catalog/, logs/
 ```
 
 ISOs live on `PENDATA`, **separate** from persistence: a factory reset erases
@@ -206,4 +210,10 @@ real disks. Before trusting Backup/Restore/Provisioning, try them on
 disposable disks inside a VM.
 
 **Out of scope for now** (a deliberate decision, in the suggested order):
-Windows via wimboot, A/B updates of the manager itself, and legacy BIOS.
+A/B updates of the manager itself, and legacy BIOS.
+
+Windows boots through wimboot, but that path has had the least exposure to
+real hardware of anything here: it is covered by synthetic-ISO tests only, so
+try it in QEMU before relying on it. It also needs a stick built with
+`--wimboot` (see [docs/BUILD.md](docs/BUILD.md)); without one, Windows images
+still download, verify, mount and run in the VM, but do not offer Boot.

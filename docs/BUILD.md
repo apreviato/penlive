@@ -141,6 +141,22 @@ frontend's `dist/` into the chroot, and the `0200-install-manager` hook creates
 the venv with dependencies already resolved — the live system has to work with
 no network.
 
+## 2b. wimboot, for Windows images (optional)
+
+Booting Windows installation media needs the wimboot loader on PENSYS. Debian
+does not package it, so fetch the release binary once and hand the path to the
+provisioning command:
+
+```bash
+curl -LO https://github.com/ipxe/wimboot/releases/latest/download/wimboot
+```
+
+Then add `--wimboot ./wimboot` to the `install` or `image` command below.
+
+Leaving it out is fine and changes nothing else: Windows entries in the catalog
+still download, verify, mount and run in the VM, they just do not offer Boot.
+`penlive validate` does not require the file either.
+
 ## 3a. Writing straight to a stick
 
 ```bash
@@ -233,6 +249,19 @@ python tools/update_catalog.py
 
 Exits 1 if any hash, size or version differs from what the vendor publishes.
 A good candidate for a weekly CI job.
+
+Two kinds of entry behave differently:
+
+* A **torrent** source (`.torrent`) has its size read out of the torrent's own
+  metadata, not from a HEAD request — that would measure the few hundred KB of
+  the `.torrent` file. The hash still comes from the vendor's checksum file,
+  matched against the ISO name with the `.torrent` suffix stripped.
+* A **`checksum_manual`** entry is one whose vendor publishes no
+  machine-readable checksum file. Microsoft gives the Windows evaluation
+  hashes in a PDF, so the tool only checks the size, and says so. If the size
+  moves, the build was replaced: re-read the linked document and update the
+  URL, size and hash together, by hand. `--write` deliberately leaves those
+  entries alone rather than writing a fresh size next to a stale hash.
 
 ```bash
 python tools/update_catalog.py --write

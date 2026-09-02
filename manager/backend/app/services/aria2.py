@@ -9,6 +9,7 @@ business logic don't tangle. Reference: https://aria2.github.io/manual/en/html/a
 from __future__ import annotations
 
 import asyncio
+import base64
 import itertools
 from typing import Any
 
@@ -82,6 +83,34 @@ async def add_uri(url: str, out_filename: str, download_dir: str) -> str:
         "timeout": "60",
     }
     return await _call("aria2.addUri", [[url], options])
+
+
+async def add_torrent(torrent: bytes, download_dir: str) -> str:
+    """Start a BitTorrent download from .torrent metadata. Returns the gid.
+
+    Passing the metadata rather than the .torrent URL is deliberate. Handing
+    aria2 the URL makes it fetch the .torrent as an ordinary download and then
+    spawn a *second*, differently-gid'd download for the contents — and the
+    watcher would sit on the first gid, report "complete" at 400 KB, and hand
+    a .torrent file to the checksum step.
+
+    `out` is not set: BitTorrent takes the file name from the torrent itself
+    and aria2 ignores the option, so the caller has to expect the vendor's
+    name (see downloader._output_name).
+    """
+    options = {
+        "dir": download_dir,
+        "continue": "true",
+        "allow-overwrite": "true",
+        # Stop as soon as the ISO is complete. A rescue stick should not keep
+        # seeding on someone else's network, possibly on metered data, with no
+        # visible sign that it is still uploading.
+        "seed-time": "0",
+        # A distro release with no live peers should fail visibly rather than
+        # hang at 0% forever.
+        "bt-stop-timeout": "1800",
+    }
+    return await _call("aria2.addTorrent", [base64.b64encode(torrent).decode("ascii"), [], options])
 
 
 async def status(gid: str) -> dict[str, Any]:

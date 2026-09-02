@@ -13,6 +13,9 @@ import asyncio
 import hashlib
 import logging
 from pathlib import Path
+from urllib.parse import urlparse
+
+import httpx
 
 from .. import paths, repo
 from . import aria2
@@ -28,6 +31,34 @@ class DownloadError(RuntimeError):
     pass
 
 
+def is_torrent(source_url: str) -> bool:
+    """Some vendors publish only a torrent for their larger images — Kali's
+    live build is HTTP-unavailable, torrent-only."""
+    return Path(urlparse(source_url).path).suffix.lower() == ".torrent"
+
+
+def _output_name(image: dict) -> str:
+    """The file name the finished download will have under DOWNLOADS_TMP_DIR.
+
+    HTTP downloads are renamed to `<image_id>.iso` so the stick's file names
+    stay predictable. A torrent cannot be: aria2 takes the name from the
+    torrent's own metadata and ignores `out`, so the closest we can predict is
+    the .torrent URL with that suffix removed. Only the resume shortcut relies
+    on this being right — _finalize uses the path aria2 actually reports.
+    """
+    source_url = image.get("source_url") or ""
+    if is_torrent(source_url):
+        return Path(urlparse(source_url).path).name[: -len(".torrent")]
+    return f"{image['id']}.iso"
+
+
+async def _fetch_torrent(source_url: str) -> bytes:
+    async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
+        resp = await client.get(source_url)
+        resp.raise_for_status()
+        return resp.content
+
+
 async def start(image_id: str) -> int:
     image = repo.get_image(image_id)
     if image is None:
@@ -38,7 +69,7 @@ async def start(image_id: str) -> int:
         raise DownloadError(f"{image_id} is already downloading")
 
     paths.DOWNLOADS_TMP_DIR.mkdir(parents=True, exist_ok=True)
-    out_name = f"{image_id}.iso"
+    out_name = _output_name(image)
     final_path = paths.IMAGES_DIR / out_name
     staged_path = paths.DOWNLOADS_TMP_DIR / out_name
     control_path = Path(f"{staged_path}.aria2")
@@ -99,7 +130,12 @@ async def start(image_id: str) -> int:
         # still works and remains the authoritative operation.
         pass
 
-    gid = await aria2.add_uri(image["source_url"], out_name, str(paths.DOWNLOADS_TMP_DIR))
+    source_url = image["source_url"]
+    if is_torrent(source_url):
+        torrent = await _fetch_torrent(source_url)
+        gid = await aria2.add_torrent(torrent, str(paths.DOWNLOADS_TMP_DIR))
+    else:
+        gid = await aria2.add_uri(source_url, out_name, str(paths.DOWNLOADS_TMP_DIR))
     download_row_id = repo.create_download(image_id, gid, image.get("size_bytes"))
     repo.set_image_status(image_id, "downloading")
 
