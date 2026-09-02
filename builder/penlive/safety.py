@@ -49,9 +49,21 @@ def running_system_disk() -> str | None:
     return base_disk(out) if out else None
 
 
-def assert_target_is_safe(device: str, *, allow_system_disk: bool = False) -> None:
-    """Raises UnsafeTargetError if `device` looks like something we must not wipe."""
-    if not re.match(r"^/dev/(sd[a-z]+|nvme\d+n\d+|mmcblk\d+)$", device):
+def assert_target_is_safe(
+    device: str, *, allow_system_disk: bool = False, allow_loop: bool = False
+) -> None:
+    """Raises UnsafeTargetError if `device` looks like something we must not wipe.
+
+    `allow_loop` exists for building a disk image: that path attaches a sparse
+    file to /dev/loopN and partitions it, which is not a real disk at all. It
+    stays off by default so a typo like /dev/loop0 can never reach the
+    physical-device install path.
+    """
+    pattern = r"^/dev/(sd[a-z]+|nvme\d+n\d+|mmcblk\d+)$"
+    if allow_loop:
+        pattern = r"^/dev/(sd[a-z]+|nvme\d+n\d+|mmcblk\d+|loop\d+)$"
+
+    if not re.match(pattern, device):
         raise UnsafeTargetError(
             f"{device!r} doesn't look like a whole-disk device node. Expected a real "
             "lowercase node with no partition suffix, e.g. /dev/sdb, /dev/nvme0n1 or "

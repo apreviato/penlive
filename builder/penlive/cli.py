@@ -96,7 +96,13 @@ def cmd_install(args: argparse.Namespace) -> int:
 
     layout = _build_layout(args)
     disk_size_mib = 256 * 1024 if args.dry_run else _disk_size_mib(device)
-    disk.validate_layout(layout, disk_size_mib)
+    try:
+        disk.validate_layout(layout, disk_size_mib)
+    except ValueError as exc:
+        # A size mismatch is an operator mistake, not a crash; a traceback here
+        # buries the one line that says which number to change.
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
 
     print("=" * 70)
     print(f"  TARGET DEVICE : {device}")
@@ -134,14 +140,29 @@ def cmd_image(args: argparse.Namespace) -> int:
     if not args.dry_run:
         _require_linux()
     layout = _build_layout(args)
-    disk.validate_layout(layout, args.size_mib)
+    try:
+        disk.validate_layout(layout, args.size_mib)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        print(
+            f"hint: --size-mib must be at least "
+            f"{layout.fixed_size_mib + disk.MIN_DATA_MIB} for this layout, "
+            f"or lower --persist-mib / --system-mib.",
+            file=sys.stderr,
+        )
+        return 1
 
     image_path = Path(args.output)
     runner = CommandRunner(dry_run=args.dry_run, log_path=Path(args.log) if args.log else None)
     create_sparse_image(runner, image_path, args.size_mib)
 
     with attached_loop_device(runner, image_path) as loop_dev:
-        disk.apply_layout(runner, loop_dev, layout, assume_yes=True, allow_system_disk=True)
+        # allow_loop: the target here is a sparse file attached to /dev/loopN,
+        # not a physical disk, so the whole-disk-node check must accept it.
+        disk.apply_layout(
+            runner, loop_dev, layout,
+            assume_yes=True, allow_system_disk=True, allow_loop=True,
+        )
         problems = provision(runner, loop_dev, layout, _provision_inputs(args), Path(args.mount_root))
 
     if problems:

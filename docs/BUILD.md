@@ -47,34 +47,55 @@ Log completo em `make-usb.log`.
 
 ## No Windows
 
-`live-build` não tem equivalente no Windows, então o script do Windows cobre as
-duas coisas que o Windows realmente consegue fazer:
+Um comando faz tudo — instala o que falta, constrói e grava:
 
-**Gravar uma imagem já pronta** (caminho normal — alguém gera a imagem uma vez
-no Linux ou em CI, e todo mundo grava):
+```powershell
+.\scripts\make-usb.ps1
+```
+
+Precisa de PowerShell **como administrador**. Se não houver WSL com uma
+distribuição Debian, ele oferece instalar (`wsl --install -d Debian
+--no-launch`); depois instala as dependências de build, constrói a interface e
+o sistema live, e grava o pendrive.
+
+`live-build` só roda em Debian, então a metade Linux acontece dentro do WSL.
+Há dois caminhos, tentados nesta ordem:
+
+**1. Passagem do disco (preferido).** `wsl --mount --bare` entrega o pendrive
+cru ao WSL, e o mesmo `make-usb.sh` que os usuários Linux rodam particiona e
+grava. Usa o pendrive **inteiro**, e existe um único caminho de código testado
+em vez de uma reimplementação para Windows.
+
+**2. Imagem (reserva).** Onde a passagem não funciona, o WSL gera uma `.img` de
+tamanho fixo e o PowerShell grava a partir do Windows. Mais simples, mas a
+partição de dados fica limitada ao tamanho da imagem em vez de ocupar o
+pendrive todo.
+
+O build acontece dentro do sistema de arquivos do WSL, nunca em `/mnt/d`: o
+`debootstrap` precisa de nós de dispositivo e permissões reais, que o DrvFs não
+representa, então um chroot construído ali quebra no meio.
+
+Gravar uma imagem já pronta, sem construir nada:
 
 ```powershell
 .\scripts\make-usb.ps1 -Image .\dist\penlive-amd64.img.zst
 ```
 
-**Construir via WSL e gravar**, se houver uma distribuição Debian/Ubuntu no WSL:
+As mesmas garantias do script Linux valem: o disco do sistema e unidades não
+removíveis são recusados, e a gravação exige digitar o número do disco. No
+caminho de imagem, o disco é lido de volta e comparado byte a byte
+(`-NoVerify` pula).
 
-```powershell
-.\scripts\make-usb.ps1 -Build
-```
+Arquivos `.img.zst` precisam de `zstd.exe` no PATH
+(`winget install Facebook.Zstandard`).
 
-Precisa de PowerShell **como administrador**. As mesmas garantias do script
-Linux valem: o disco do sistema e unidades não removíveis são recusados, e a
-gravação exige digitar o número do disco. Depois de gravar, ele lê o disco de
-volta e compara byte a byte com a imagem (use `-NoVerify` para pular).
+> O `docker-desktop` que o Docker Desktop cria **não** serve como distribuição
+> de build — não tem apt nem systemd — e o script o ignora explicitamente em vez
+> de falhar 30 minutos depois.
 
-Arquivos `.img.zst` são descomprimidos antes de gravar, o que precisa de
-`zstd.exe` no PATH (`winget install Facebook.Zstandard`).
-
-> `wsl --install -d Debian` instala uma distribuição adequada. O
-> `docker-desktop` que o Docker Desktop cria **não** serve — não tem apt nem
-> systemd — e o script o ignora explicitamente em vez de falhar 30 minutos
-> depois.
+> Se o WSL acabou de ser habilitado, o Windows precisa reiniciar antes de
+> instalar distribuições. O script detecta isso e avisa em vez de falhar de
+> forma obscura.
 
 O restante deste documento descreve os mesmos passos manualmente, útil para
 depurar uma etapa específica.

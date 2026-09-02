@@ -126,9 +126,10 @@ def apply_layout(
     assume_yes: bool = False,
     typed_confirmation: str | None = None,
     allow_system_disk: bool = False,
+    allow_loop: bool = False,
 ) -> None:
     """Wipe `device` and lay down `layout`. Irreversible outside of --dry-run."""
-    assert_target_is_safe(device, allow_system_disk=allow_system_disk)
+    assert_target_is_safe(device, allow_system_disk=allow_system_disk, allow_loop=allow_loop)
     if not assume_yes:
         confirm_or_raise(device, typed_confirmation or "")
 

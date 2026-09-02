@@ -1,39 +1,56 @@
 <#
 .SYNOPSIS
-    Writes a PenLive USB stick on Windows.
+    Builds and writes a PenLive USB stick on Windows, end to end.
 
 .DESCRIPTION
-    The live system itself must be built on Debian/Ubuntu - live-build has no
-    Windows equivalent, and pretending otherwise would just fail late. So this
-    script covers the two things Windows can genuinely do:
+    Run it with no arguments and it does everything: installs what is missing,
+    builds the live system, and writes the stick.
 
-      1. Flash an existing image (.img or .img.zst) onto a USB stick. This is
-         the normal path: someone builds the image once on Linux or in CI, and
-         everyone else flashes it.
+    live-build only runs on Debian, so the Linux half happens inside WSL. Two
+    routes, tried in this order:
 
-      2. Drive the Linux build for you through WSL, when a Debian-family WSL
-         distribution is installed (-Build).
+      1. Disk passthrough (preferred). `wsl --mount --bare` hands the raw USB
+         to WSL, and the same make-usb.sh that Linux users run partitions and
+         writes it. The whole stick is used, and there is exactly one tested
+         code path rather than a Windows reimplementation.
 
-    Same guarantees as the Linux script: the system disk and non-removable
-    drives are refused, and the erase always needs the disk number typed back.
+      2. Image fallback. Where passthrough is unavailable, WSL builds a fixed
+         size .img and this script writes it from Windows. Simpler, but the
+         data partition is capped at the image size instead of filling the
+         stick.
+
+    The build happens inside the WSL filesystem, never on /mnt/c or /mnt/d:
+    debootstrap needs device nodes and real ownership, which DrvFs cannot
+    provide, so a chroot built there fails partway through.
 
 .PARAMETER Image
-    Path to a .img or .img.zst produced by `make image` on Linux.
+    Flash this existing .img/.img.zst instead of building anything.
 
 .PARAMETER DiskNumber
     Target disk number (from Get-Disk). Prompts interactively when omitted.
 
-.PARAMETER Build
-    Build the image first inside WSL, then flash it.
+.PARAMETER Distro
+    WSL distribution to build in. Defaults to the first Debian-family one.
+
+.PARAMETER ForceImageMode
+    Skip disk passthrough and use the image route.
+
+.PARAMETER SkipBuild
+    Reuse the live system already built inside WSL.
+
+.PARAMETER ImageSizeMib
+    Image size for the fallback route (default 20480). Must exceed the fixed
+    partitions (12800 MiB) plus a 4096 MiB minimum data partition, so 16384
+    looks natural but is rejected.
 
 .PARAMETER NoVerify
-    Skip the read-back verification pass (faster, less certain).
+    Skip the read-back verification after an image write.
+
+.EXAMPLE
+    .\scripts\make-usb.ps1
 
 .EXAMPLE
     .\scripts\make-usb.ps1 -Image .\dist\penlive-amd64.img.zst
-
-.EXAMPLE
-    .\scripts\make-usb.ps1 -Build
 
 .NOTES
     Must be run from an elevated PowerShell ("Run as Administrator").
@@ -42,33 +59,36 @@
 param(
     [string] $Image,
     [int]    $DiskNumber = -1,
-    [switch] $Build,
+    [string] $Distro,
+    [switch] $ForceImageMode,
+    [switch] $SkipBuild,
+    [int]    $ImageSizeMib = 20480,
     [switch] $NoVerify
 )
 
 $ErrorActionPreference = 'Stop'
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $LogFile  = Join-Path $RepoRoot 'make-usb.log'
+$WslWork  = '/root/penlive-build'
+
+$script:Step = 0
+$script:TotalSteps = 5
 
 # ---------------------------------------------------------------- output ----
 
-$script:Step = 0
-$script:TotalSteps = 4
-
-function Write-Log {
-    param([string] $Message)
-    $Message | Out-File -FilePath $LogFile -Append -Encoding utf8
-}
-function Say  { param([string] $m) Write-Host $m;                     Write-Log $m }
-function Info { param([string] $m) Write-Host "==> $m" -Foreground Cyan;   Write-Log "==> $m" }
-function Good { param([string] $m) Write-Host "  ok $m" -Foreground Green; Write-Log "  ok $m" }
-function Warn { param([string] $m) Write-Host "  !  $m" -Foreground Yellow;Write-Log "  !  $m" }
+function Write-Log { param([string] $m) $m | Out-File -FilePath $LogFile -Append -Encoding utf8 }
+function Say  { param([string] $m) Write-Host $m;                            Write-Log $m }
+function Info { param([string] $m) Write-Host "==> $m" -Foreground Cyan;     Write-Log "==> $m" }
+function Good { param([string] $m) Write-Host "  ok $m" -Foreground Green;   Write-Log "  ok $m" }
+function Warn { param([string] $m) Write-Host "  !  $m" -Foreground Yellow;  Write-Log "  !  $m" }
+function Note { param([string] $m) Write-Host "     $m" -Foreground DarkGray;Write-Log "     $m" }
 function Fail {
     param([string] $m)
     Write-Host "error: $m" -Foreground Red
     Write-Log "error: $m"
     Write-Host ""
     Write-Host "Full log: $LogFile" -Foreground DarkGray
+    Invoke-Cleanup
     exit 1
 }
 function Step {
@@ -78,7 +98,6 @@ function Step {
     Write-Host "[$script:Step/$script:TotalSteps] $m" -Foreground White
     Write-Host ("-" * 66) -Foreground DarkGray
 }
-
 function Confirm-YesNo {
     param([string] $Question, [bool] $DefaultYes = $true)
     if ($DefaultYes) { $hint = "[Y/n]" } else { $hint = "[y/N]" }
@@ -87,12 +106,26 @@ function Confirm-YesNo {
     return ($reply.ToLower() -in @('y', 'yes'))
 }
 
+# Native tools emit UTF-16 with embedded NULs when captured. [string][char]0
+# picks String.Replace(string,string); the (char,char) overload rejects an
+# empty replacement and throws.
+function Clean-Output { param($Raw) return ($Raw -join "`n").Replace([string][char]0, '') }
+
+$script:MountedDisk = $null
+function Invoke-Cleanup {
+    if ($script:MountedDisk) {
+        Write-Host "     releasing $($script:MountedDisk) from WSL" -Foreground DarkGray
+        & wsl.exe --unmount $script:MountedDisk 2>$null | Out-Null
+        $script:MountedDisk = $null
+    }
+}
+trap { Invoke-Cleanup }
+
 # -------------------------------------------------------------- preflight ----
 
 "" | Out-File -FilePath $LogFile -Encoding utf8
-
 Say ""
-Write-Host "PenLive USB writer" -Foreground White
+Write-Host "PenLive USB builder" -Foreground White
 Write-Host "repository: $RepoRoot" -Foreground DarkGray
 
 $identity  = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -101,143 +134,146 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
     Fail "must run elevated. Right-click PowerShell and choose 'Run as Administrator'."
 }
 
-# ------------------------------------------------------- 1. get an image ----
+$FlashOnly = [bool] $Image
+if ($FlashOnly) { $script:TotalSteps = 3 }
 
-Step "Locating the image"
+# --------------------------------------------------------- 1. WSL + distro ----
 
-function Find-WslDistro {
-    # `wsl -l -q` emits UTF-16 with embedded NULs when captured, so strip them
-    # before matching or every comparison silently fails.
+function Get-WslDistros {
     $raw = & wsl.exe -l -q
-    if ($LASTEXITCODE -ne 0) { return $null }
-    # [string][char]0 selects String.Replace(string, string). The
-    # (char, char) overload rejects an empty replacement, throws, and
-    # leaves the list empty - silently reporting "no distro" even on a
-    # machine that does have Debian installed.
-    $names = ($raw -join "`n").Replace([string][char]0, '') -split "`r?`n" |
-             ForEach-Object { $_.Trim() } |
-             Where-Object { $_ -ne '' }
-
-    # docker-desktop is a WSL distro but has no apt and no systemd; it cannot
-    # run live-build, so treat it as absent rather than failing 30 minutes in.
-    return $names | Where-Object { $_ -notmatch '^docker-desktop' } | Select-Object -First 1
+    if ($LASTEXITCODE -ne 0) { return @() }
+    return (Clean-Output $raw) -split "`r?`n" |
+           ForEach-Object { $_.Trim() } |
+           Where-Object { $_ -ne '' }
 }
 
-if ($Build) {
-    $distro = Find-WslDistro
-    if (-not $distro) {
-        Fail @"
--Build needs a Debian-family WSL distribution, and none was found.
+function Get-BuildDistro {
+    # docker-desktop is a WSL distro with no apt and no systemd. Excluded here
+    # rather than discovered 30 minutes into a build that cannot work.
+    return (Get-WslDistros) | Where-Object { $_ -notmatch '^docker-desktop' } | Select-Object -First 1
+}
 
-Install one, then re-run:
+if (-not $FlashOnly) {
+    Step "Preparing the Linux build environment (WSL)"
+
+    if (-not (Get-Command wsl.exe -ErrorAction SilentlyContinue)) {
+        Fail @"
+WSL is not installed. Install it, reboot, then run this script again:
+
     wsl --install -d Debian
-
-Or build the image on a Linux machine and flash it here:
-    make image                                  (on Linux)
-    .\scripts\make-usb.ps1 -Image .\dist\penlive-amd64.img.zst
 "@
     }
-    Info "building inside WSL distribution '$distro' (20-40 minutes)"
-    Warn "WSL cannot write to the USB stick directly, so this only produces the image."
 
-    $wslRepo = & wsl.exe -d $distro -- wslpath -a "$RepoRoot"
-    if ($LASTEXITCODE -ne 0) { Fail "could not translate $RepoRoot into a WSL path" }
-    $wslRepo = $wslRepo.Trim()
+    if (-not $Distro) { $Distro = Get-BuildDistro }
 
-    & wsl.exe -d $distro -u root -- bash -lc "cd '$wslRepo' && ./live/build.sh && python3 -m penlive.cli image dist/penlive-amd64.img --live-dir live/build/out --grub-cfg grub/grub.cfg --recovery-cfg grub/recovery.cfg --catalog catalog/catalog.json"
-    if ($LASTEXITCODE -ne 0) { Fail "the WSL build failed - see the output above" }
+    if (-not $Distro) {
+        Warn "no Debian-family WSL distribution found"
+        Note "PenLive's live system can only be built on Debian or a derivative."
+        Note "Debian will be installed into WSL (a few hundred MB download)."
+        if (-not (Confirm-YesNo "Install Debian into WSL now?")) {
+            Fail "cannot build without a Debian WSL distribution"
+        }
 
-    $Image = Join-Path $RepoRoot 'dist\penlive-amd64.img'
-    Good "built $Image"
-}
+        Info "installing Debian into WSL (this takes a few minutes)"
+        # --no-launch avoids the interactive first-run account setup; the build
+        # runs as root, so no user account is needed at all.
+        & wsl.exe --install -d Debian --no-launch
+        if ($LASTEXITCODE -ne 0) {
+            Fail @"
+Installing Debian failed (exit $LASTEXITCODE).
 
-if (-not $Image) {
-    $candidates = @()
-    $distDir = Join-Path $RepoRoot 'dist'
-    if (Test-Path $distDir) {
-        $candidates = Get-ChildItem $distDir -File |
-                      Where-Object { $_.Name -match '\.img(\.zst)?$' } |
-                      Sort-Object LastWriteTime -Descending
+If WSL itself was just enabled, Windows needs a reboot before distributions
+can be installed. Reboot, then run this script again.
+"@
+        }
+        $Distro = Get-BuildDistro
+        if (-not $Distro) {
+            Fail "Debian was installed but is not listed yet. Reboot and run this script again."
+        }
+        Good "installed $Distro"
+    } else {
+        Good "using WSL distribution '$Distro'"
     }
-    if ($candidates.Count -eq 0) {
+
+    # A distro can be registered but fail to start (WSL not fully enabled yet).
+    & wsl.exe -d $Distro -u root -- true 2>$null | Out-Null
+    if ($LASTEXITCODE -ne 0) {
         Fail @"
-No image given and none found in dist\.
+WSL distribution '$Distro' is registered but will not start.
 
-Build one on a Debian/Ubuntu machine (or WSL):
-    make image
-
-then flash it here:
-    .\scripts\make-usb.ps1 -Image .\dist\penlive-amd64.img.zst
-
-Or let this script drive the WSL build for you:
-    .\scripts\make-usb.ps1 -Build
+This usually means Windows still needs a reboot after enabling WSL. Reboot,
+then run this script again.
 "@
     }
-    $Image = $candidates[0].FullName
-    Info "using most recent image: $Image"
+    Good "'$Distro' starts and runs as root"
 }
 
-if (-not (Test-Path -LiteralPath $Image)) { Fail "no such file: $Image" }
-$imageItem = Get-Item -LiteralPath $Image
+# -------------------------------------------------- 2. sync repo into WSL ----
 
-# zstd images are decompressed to a temp file first: writing a raw disk from a
-# streaming decompressor makes progress reporting and verification unreliable,
-# and the temp copy is deleted afterwards.
-$tempImage = $null
-if ($imageItem.Extension -eq '.zst') {
-    if (-not (Get-Command zstd.exe -ErrorAction SilentlyContinue)) {
-        Fail @"
-$($imageItem.Name) is zstd-compressed but zstd.exe is not on PATH.
-
-Install it (winget install Facebook.Zstandard), or decompress manually and
-pass the resulting .img.
-"@
+function Invoke-Wsl {
+    param([string] $Command, [switch] $Stream)
+    if ($Stream) {
+        & wsl.exe -d $Distro -u root -- bash -lc $Command
+    } else {
+        $out = & wsl.exe -d $Distro -u root -- bash -lc $Command
+        return (Clean-Output $out).Trim()
     }
-    $tempImage = Join-Path $env:TEMP ("penlive-" + [Guid]::NewGuid().ToString('N') + ".img")
-    Info "decompressing to $tempImage"
-    & zstd.exe -d -f -o $tempImage $imageItem.FullName | Out-Null
-    if ($LASTEXITCODE -ne 0) { Fail "zstd decompression failed" }
-    $imageItem = Get-Item -LiteralPath $tempImage
 }
 
-$imageBytes = $imageItem.Length
-Good ("image is {0:N1} GiB" -f ($imageBytes / 1GB))
+if (-not $FlashOnly) {
+    Step "Copying the project into WSL"
 
-# ------------------------------------------------------ 2. pick the disk ----
+    $wslRepo = Invoke-Wsl "wslpath -a '$RepoRoot'"
+    if ($LASTEXITCODE -ne 0 -or -not $wslRepo) { Fail "could not translate $RepoRoot to a WSL path" }
+    Note "source: $wslRepo"
+    Note "build : $WslWork"
+
+    # Copied into the distro's own ext4 filesystem on purpose: live-build runs
+    # debootstrap, which creates device nodes and sets ownership that DrvFs
+    # (/mnt/d) cannot represent, so building in place would fail partway.
+    Info "syncing (excluding node_modules, build output and .git)"
+    $sync = @"
+set -e
+mkdir -p '$WslWork'
+if command -v rsync >/dev/null 2>&1; then
+  rsync -a --delete \
+    --exclude 'node_modules' --exclude 'dist' --exclude '.git' \
+    --exclude 'live/build' --exclude 'devdata' \
+    '$wslRepo'/ '$WslWork'/
+else
+  tar -C '$wslRepo' \
+      --exclude=node_modules --exclude=dist --exclude=.git \
+      --exclude=live/build --exclude=devdata \
+      -cf - . | tar -C '$WslWork' -xf -
+fi
+chmod +x '$WslWork'/scripts/*.sh '$WslWork'/live/build.sh '$WslWork'/live/auto/config 2>/dev/null || true
+chmod +x '$WslWork'/live/config/hooks/live/*.hook.chroot 2>/dev/null || true
+"@
+    Invoke-Wsl $sync -Stream
+    if ($LASTEXITCODE -ne 0) { Fail "could not copy the project into WSL" }
+    Good "synced"
+}
+
+# ------------------------------------------------------ 3. pick the disk ----
 
 Step "Choosing the target USB stick"
 
-try {
-    $disks = Get-Disk | Sort-Object Number
-} catch {
-    Fail "could not enumerate disks: $($_.Exception.Message)"
-}
+try { $disks = Get-Disk | Sort-Object Number } catch { Fail "could not enumerate disks: $($_.Exception.Message)" }
 
 if ($DiskNumber -lt 0) {
     Say ""
-    "{0,-4} {1,-6} {2,10}  {3,-10} {4,-6} {5}" -f '#', 'DISK', 'SIZE', 'BUS', 'REM', 'MODEL' |
-        ForEach-Object { Write-Host "     $_" }
-
+    Write-Host ("     {0,-4} {1,10}  {2,-8} {3,-5} {4}" -f '#', 'SIZE', 'BUS', 'REM', 'MODEL')
     foreach ($d in $disks) {
         $marker = ''
-        if ($d.IsSystem -or $d.IsBoot) {
-            $marker = '<- SYSTEM DISK'
-        } elseif ($d.BusType -ne 'USB') {
-            $marker = '<- not removable'
-        }
-        $line = "{0,-4} {1,-6} {2,9:N1}G  {3,-10} {4,-6} {5} {6}" -f `
-            "$($d.Number))", $d.Number, ($d.Size / 1GB), $d.BusType,
-            $(if ($d.BusType -eq 'USB') { 'yes' } else { 'no' }),
-            $d.FriendlyName, $marker
-        if ($marker -ne '') {
-            Write-Host "     $line" -Foreground Yellow
-        } else {
-            Write-Host "     $line"
-        }
-        Write-Log "     $line"
+        if ($d.IsSystem -or $d.IsBoot) { $marker = '<- SYSTEM DISK' }
+        elseif ($d.BusType -ne 'USB')  { $marker = '<- not removable' }
+        $rem = 'no'; if ($d.BusType -eq 'USB') { $rem = 'yes' }
+        $line = "     {0,-4} {1,9:N1}G  {2,-8} {3,-5} {4} {5}" -f `
+            "$($d.Number))", ($d.Size / 1GB), $d.BusType, $rem, $d.FriendlyName, $marker
+        if ($marker) { Write-Host $line -Foreground Yellow } else { Write-Host $line }
+        Write-Log $line
     }
     Say ""
-
     $answer = Read-Host "     Which disk number?"
     if (-not ($answer -match '^\d+$')) { Fail "invalid selection: $answer" }
     $DiskNumber = [int] $answer
@@ -245,145 +281,219 @@ if ($DiskNumber -lt 0) {
 
 $disk = $disks | Where-Object { $_.Number -eq $DiskNumber }
 if (-not $disk) { Fail "no disk with number $DiskNumber" }
-
-if ($disk.IsSystem -or $disk.IsBoot) {
-    Fail "disk $DiskNumber is this machine's system disk. Refusing."
-}
+if ($disk.IsSystem -or $disk.IsBoot) { Fail "disk $DiskNumber is this machine's system disk. Refusing." }
 if ($disk.BusType -ne 'USB') {
     Warn "disk $DiskNumber is $($disk.BusType), not USB - this may be an internal drive"
     if (-not (Confirm-YesNo "Continue anyway?" $false)) { Fail "aborted" }
 }
-if ($disk.Size -lt $imageBytes) {
-    Fail ("disk $DiskNumber holds {0:N1} GiB but the image needs {1:N1} GiB" -f ($disk.Size / 1GB), ($imageBytes / 1GB))
-}
-
-# --------------------------------------------------------------- 3. write ----
-
-Step "Writing to disk $DiskNumber"
 
 Say ""
-Write-Host "     Everything on disk $DiskNumber will be erased." -Foreground Red
+Write-Host "     Everything on disk $DiskNumber ($($disk.FriendlyName)) will be erased." -Foreground Red
 Say ""
 Get-Partition -DiskNumber $DiskNumber -ErrorAction SilentlyContinue |
-    Format-Table -AutoSize PartitionNumber, DriveLetter, @{n='Size(GB)';e={'{0:N1}' -f ($_.Size/1GB)}}, Type |
+    Format-Table -AutoSize PartitionNumber, DriveLetter,
+        @{n='Size(GB)';e={'{0:N1}' -f ($_.Size/1GB)}}, Type |
     Out-String | ForEach-Object { Write-Host $_ }
-Say ""
 
 Write-Host "     Type the disk number to confirm erasing it."
 $typed = Read-Host "     disk $DiskNumber >"
 if ($typed -ne "$DiskNumber") { Fail "confirmation did not match; nothing was written" }
 
-Info "clearing existing partitions"
-Clear-Disk -Number $DiskNumber -RemoveData -RemoveOEM -Confirm:$false
-# Windows re-mounts volumes eagerly; without a beat the raw handle can still
-# collide with a volume lock that was only just released.
-Start-Sleep -Seconds 2
-
-Info "writing image - do not remove the stick"
-
 $devicePath = "\\.\PHYSICALDRIVE$DiskNumber"
-$bufferSize = 4MB
-$source = $null
-$target = $null
-try {
-    $source = [System.IO.File]::OpenRead($imageItem.FullName)
-    $target = New-Object System.IO.FileStream(
-        $devicePath, [System.IO.FileMode]::Open,
-        [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
 
-    $buffer  = New-Object byte[] $bufferSize
-    $written = 0L
-    $sw = [Diagnostics.Stopwatch]::StartNew()
+# ------------------------------------------- 4. build + write via WSL ----
 
-    while ($true) {
-        $read = $source.Read($buffer, 0, $bufferSize)
-        if ($read -le 0) { break }
-        $target.Write($buffer, 0, $read)
-        $written += $read
+$usedPassthrough = $false
 
-        $pct = [int](($written / $imageBytes) * 100)
-        $mbps = 0
-        if ($sw.Elapsed.TotalSeconds -gt 0) {
-            $mbps = [int](($written / 1MB) / $sw.Elapsed.TotalSeconds)
+if (-not $FlashOnly -and -not $ForceImageMode) {
+    Step "Building and writing through WSL"
+
+    Info "handing disk $DiskNumber to WSL"
+    # Volumes must be gone before WSL can claim the whole disk.
+    Clear-Disk -Number $DiskNumber -RemoveData -RemoveOEM -Confirm:$false -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 2
+
+    $before = (Invoke-Wsl "lsblk -dno NAME | sort") -split "`r?`n" | ForEach-Object { $_.Trim() }
+
+    & wsl.exe --mount $devicePath --bare
+    if ($LASTEXITCODE -ne 0) {
+        Warn "disk passthrough unavailable (exit $LASTEXITCODE); falling back to the image route"
+    } else {
+        $script:MountedDisk = $devicePath
+        Start-Sleep -Seconds 2
+
+        $after = (Invoke-Wsl "lsblk -dno NAME | sort") -split "`r?`n" | ForEach-Object { $_.Trim() }
+        # Identify by difference rather than guessing /dev/sdb: WSL assigns the
+        # next free letter, and guessing wrong here means writing to the wrong
+        # disk inside the VM.
+        # @(...) forces array semantics: a single match would otherwise be a
+        # bare string, whose .Count behaves differently across PowerShell
+        # versions, and getting this wrong means writing to the wrong disk.
+        $new = @(Compare-Object -ReferenceObject $before -DifferenceObject $after |
+                 Where-Object { $_.SideIndicator -eq '=>' } |
+                 Select-Object -ExpandProperty InputObject)
+
+        if ($new.Count -ne 1) {
+            Warn "could not identify the disk inside WSL (found: $($new -join ', ')); falling back to the image route"
+            Invoke-Cleanup
+        } else {
+            $wslDevice = "/dev/$($new[0])"
+            Good "disk $DiskNumber is $wslDevice inside WSL"
+
+            $skipFlag = ''
+            if ($SkipBuild) { $skipFlag = '--skip-build' }
+
+            Info "running the Linux installer inside WSL (20-40 minutes on first run)"
+            Note "installs build dependencies, builds the UI and live system, then writes the stick"
+            Say ""
+
+            # --assume-confirmed is safe here precisely because this script has
+            # already taken an explicit typed confirmation for this same disk.
+            Invoke-Wsl "cd '$WslWork' && ./scripts/make-usb.sh --device '$wslDevice' --yes --assume-confirmed $skipFlag" -Stream
+            $rc = $LASTEXITCODE
+
+            Invoke-Cleanup
+            if ($rc -ne 0) { Fail "the WSL build/write failed (exit $rc) - see the output above" }
+
+            $usedPassthrough = $true
+            Good "stick written using the full capacity of the device"
         }
-        Write-Progress -Activity "Writing PenLive to disk $DiskNumber" `
-            -Status ("{0:N1} / {1:N1} GiB  -  {2} MB/s" -f ($written/1GB), ($imageBytes/1GB), $mbps) `
-            -PercentComplete $pct
     }
-    $target.Flush($true)
-    Write-Progress -Activity "Writing PenLive to disk $DiskNumber" -Completed
-    Good ("wrote {0:N1} GiB in {1:N0}s" -f ($written/1GB), $sw.Elapsed.TotalSeconds)
-} catch {
-    Fail "write failed: $($_.Exception.Message)"
-} finally {
-    if ($target) { $target.Dispose() }
-    if ($source) { $source.Dispose() }
 }
 
-# -------------------------------------------------------------- 4. verify ----
+# ------------------------------------------------ 4b. image route ----
 
-Step "Verifying"
+if (-not $usedPassthrough) {
+    if (-not $FlashOnly) {
+        Step "Building an image inside WSL"
+        Warn "the data partition will be capped at $ImageSizeMib MiB rather than filling the stick"
 
-if ($NoVerify) {
-    Warn "skipped (-NoVerify)"
-} else {
-    $source = $null
-    $target = $null
+        $skipFlag = ''
+        if ($SkipBuild) { $skipFlag = '--skip-build' }
+
+        Invoke-Wsl "cd '$WslWork' && ./scripts/make-usb.sh --build-only --yes $skipFlag --image-size-mib $ImageSizeMib --image-out '$WslWork/dist/penlive-amd64.img'" -Stream
+        if ($LASTEXITCODE -ne 0) { Fail "the WSL image build failed - see the output above" }
+
+        New-Item -ItemType Directory -Force -Path (Join-Path $RepoRoot 'dist') | Out-Null
+        Info "copying the image out of WSL"
+        # $wslRepo was already translated above; reusing it avoids a second
+        # wslpath round-trip and any ambiguity over mixed path separators.
+        Invoke-Wsl "mkdir -p '$wslRepo/dist' && cp '$WslWork/dist/penlive-amd64.img' '$wslRepo/dist/'" -Stream
+        if ($LASTEXITCODE -ne 0) { Fail "could not copy the image out of WSL" }
+
+        $Image = Join-Path $RepoRoot 'dist\penlive-amd64.img'
+        Good "image ready at $Image"
+    }
+
+    if (-not (Test-Path -LiteralPath $Image)) { Fail "no such file: $Image" }
+    $imageItem = Get-Item -LiteralPath $Image
+
+    $tempImage = $null
+    if ($imageItem.Extension -eq '.zst') {
+        if (-not (Get-Command zstd.exe -ErrorAction SilentlyContinue)) {
+            Fail "$($imageItem.Name) is zstd-compressed but zstd.exe is not on PATH (winget install Facebook.Zstandard)"
+        }
+        $tempImage = Join-Path $env:TEMP ("penlive-" + [Guid]::NewGuid().ToString('N') + ".img")
+        Info "decompressing to $tempImage"
+        & zstd.exe -d -f -o $tempImage $imageItem.FullName | Out-Null
+        if ($LASTEXITCODE -ne 0) { Fail "zstd decompression failed" }
+        $imageItem = Get-Item -LiteralPath $tempImage
+    }
+
+    $imageBytes = $imageItem.Length
+    if ($disk.Size -lt $imageBytes) {
+        Fail ("disk $DiskNumber holds {0:N1} GiB but the image needs {1:N1} GiB" -f ($disk.Size/1GB), ($imageBytes/1GB))
+    }
+
+    Step "Writing disk $DiskNumber"
+    Info "clearing existing partitions"
+    Clear-Disk -Number $DiskNumber -RemoveData -RemoveOEM -Confirm:$false -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 2
+
+    Info "writing - do not remove the stick"
+    $bufferSize = 4MB
+    $source = $null; $target = $null
     try {
         $source = [System.IO.File]::OpenRead($imageItem.FullName)
-        $target = New-Object System.IO.FileStream(
-            $devicePath, [System.IO.FileMode]::Open,
-            [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
-
-        $bufA = New-Object byte[] $bufferSize
-        $bufB = New-Object byte[] $bufferSize
-        $checked = 0L
-        $mismatch = $false
-
-        while ($checked -lt $imageBytes) {
-            $want = [Math]::Min($bufferSize, $imageBytes - $checked)
-            $a = $source.Read($bufA, 0, $want)
-            if ($a -le 0) { break }
-
-            # A raw device read can return a short count; keep asking until the
-            # window is full, or the comparison would fail on alignment alone.
-            $b = 0
-            while ($b -lt $a) {
-                $n = $target.Read($bufB, $b, $a - $b)
-                if ($n -le 0) { break }
-                $b += $n
-            }
-            if ($b -ne $a) { $mismatch = $true; break }
-
-            for ($i = 0; $i -lt $a; $i++) {
-                if ($bufA[$i] -ne $bufB[$i]) { $mismatch = $true; break }
-            }
-            if ($mismatch) { break }
-
-            $checked += $a
-            Write-Progress -Activity "Verifying disk $DiskNumber" `
-                -Status ("{0:N1} / {1:N1} GiB" -f ($checked/1GB), ($imageBytes/1GB)) `
-                -PercentComplete ([int](($checked / $imageBytes) * 100))
+        $target = New-Object System.IO.FileStream($devicePath,
+            [System.IO.FileMode]::Open, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+        $buffer = New-Object byte[] $bufferSize
+        $written = 0L
+        $sw = [Diagnostics.Stopwatch]::StartNew()
+        while ($true) {
+            $read = $source.Read($buffer, 0, $bufferSize)
+            if ($read -le 0) { break }
+            $target.Write($buffer, 0, $read)
+            $written += $read
+            $mbps = 0
+            if ($sw.Elapsed.TotalSeconds -gt 0) { $mbps = [int](($written/1MB)/$sw.Elapsed.TotalSeconds) }
+            Write-Progress -Activity "Writing PenLive to disk $DiskNumber" `
+                -Status ("{0:N1} / {1:N1} GiB  -  {2} MB/s" -f ($written/1GB), ($imageBytes/1GB), $mbps) `
+                -PercentComplete ([int](($written/$imageBytes)*100))
         }
-        Write-Progress -Activity "Verifying disk $DiskNumber" -Completed
-
-        if ($mismatch) {
-            Fail "verification FAILED - the stick does not match the image. Do not boot it; write again."
-        }
-        Good ("verified {0:N1} GiB" -f ($checked/1GB))
+        $target.Flush($true)
+        Write-Progress -Activity "Writing PenLive to disk $DiskNumber" -Completed
+        Good ("wrote {0:N1} GiB in {1:N0}s" -f ($written/1GB), $sw.Elapsed.TotalSeconds)
     } catch {
-        Fail "verification error: $($_.Exception.Message)"
+        Fail "write failed: $($_.Exception.Message)"
     } finally {
         if ($target) { $target.Dispose() }
         if ($source) { $source.Dispose() }
     }
-}
 
-if ($tempImage -and (Test-Path -LiteralPath $tempImage)) {
-    Remove-Item -LiteralPath $tempImage -Force -ErrorAction SilentlyContinue
+    Step "Verifying"
+    if ($NoVerify) {
+        Warn "skipped (-NoVerify)"
+    } else {
+        $source = $null; $target = $null
+        try {
+            $source = [System.IO.File]::OpenRead($imageItem.FullName)
+            $target = New-Object System.IO.FileStream($devicePath,
+                [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+            $bufA = New-Object byte[] $bufferSize
+            $bufB = New-Object byte[] $bufferSize
+            $checked = 0L; $mismatch = $false
+            while ($checked -lt $imageBytes) {
+                $want = [Math]::Min($bufferSize, $imageBytes - $checked)
+                $a = $source.Read($bufA, 0, $want)
+                if ($a -le 0) { break }
+                # Raw device reads can come back short; refill before comparing
+                # or the mismatch would be alignment, not corruption.
+                $b = 0
+                while ($b -lt $a) {
+                    $n = $target.Read($bufB, $b, $a - $b)
+                    if ($n -le 0) { break }
+                    $b += $n
+                }
+                if ($b -ne $a) { $mismatch = $true; break }
+                for ($i = 0; $i -lt $a; $i++) {
+                    if ($bufA[$i] -ne $bufB[$i]) { $mismatch = $true; break }
+                }
+                if ($mismatch) { break }
+                $checked += $a
+                Write-Progress -Activity "Verifying disk $DiskNumber" `
+                    -Status ("{0:N1} / {1:N1} GiB" -f ($checked/1GB), ($imageBytes/1GB)) `
+                    -PercentComplete ([int](($checked/$imageBytes)*100))
+            }
+            Write-Progress -Activity "Verifying disk $DiskNumber" -Completed
+            if ($mismatch) { Fail "verification FAILED - do not boot this stick; write it again" }
+            Good ("verified {0:N1} GiB" -f ($checked/1GB))
+        } catch {
+            Fail "verification error: $($_.Exception.Message)"
+        } finally {
+            if ($target) { $target.Dispose() }
+            if ($source) { $source.Dispose() }
+        }
+    }
+
+    if ($tempImage -and (Test-Path -LiteralPath $tempImage)) {
+        Remove-Item -LiteralPath $tempImage -Force -ErrorAction SilentlyContinue
+    }
 }
 
 # ----------------------------------------------------------------- done ----
+
+Invoke-Cleanup
 
 Say ""
 Write-Host "PenLive is ready on disk $DiskNumber" -Foreground Green
@@ -396,9 +506,13 @@ Say ""
 Write-Host "  Secure Boot must be disabled - it is not supported yet." -Foreground Yellow
 Say "  First boot asks for keyboard layout and Wi-Fi, then shows the catalog."
 Say ""
-Write-Host "  Windows may offer to format the stick - decline. It cannot read" -Foreground DarkGray
-Write-Host "  the Linux partitions, but the PENDATA partition is exFAT and will" -Foreground DarkGray
-Write-Host "  appear normally once PenLive has been booted at least once." -Foreground DarkGray
+if (-not $usedPassthrough -and -not $FlashOnly) {
+    Note "This used the image route, so the data partition is capped at ${ImageSizeMib} MiB."
+    Note "Re-running without -ForceImageMode uses the whole stick when passthrough works."
+    Say ""
+}
+Note "Windows may offer to format the stick - decline. It cannot read the Linux"
+Note "partitions, but PENDATA is exFAT and appears normally after the first boot."
 Say ""
 Write-Host "  Log: $LogFile" -Foreground DarkGray
 Say ""

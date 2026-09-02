@@ -35,3 +35,22 @@ def test_confirm_or_raise_requires_exact_match():
 def test_confirm_or_raise_rejects_blank():
     with pytest.raises(UnsafeTargetError):
         confirm_or_raise("/dev/sdb", "")
+
+
+def test_loop_devices_are_rejected_by_default():
+    """The physical-device install path must never accept /dev/loopN."""
+    with pytest.raises(UnsafeTargetError, match="whole-disk"):
+        assert_target_is_safe("/dev/loop0")
+
+
+def test_loop_devices_are_accepted_when_explicitly_allowed():
+    """Building a disk image partitions a sparse file attached to /dev/loopN.
+    Without this the entire `penlive image` path raises before writing a byte."""
+    assert_target_is_safe("/dev/loop0", allow_loop=True)
+    assert_target_is_safe("/dev/loop12", allow_loop=True)
+
+
+def test_allow_loop_does_not_weaken_other_checks():
+    for bad in ("/dev/loop0p1", "/etc/passwd", "/dev/sdb1"):
+        with pytest.raises(UnsafeTargetError):
+            assert_target_is_safe(bad, allow_loop=True)

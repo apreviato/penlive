@@ -25,6 +25,13 @@ DATA_FS=exfat
 
 ASSUME_YES=0
 SKIP_BUILD=0
+BUILD_ONLY=0
+ASSUME_CONFIRMED=0
+IMAGE_OUT=""
+# Must exceed EFI+SYSTEM+PERSIST (12800) plus the 4096 MiB minimum data
+# partition. 16 GiB looks like a natural default but leaves only 3584 MiB and
+# is rejected; 20 GiB still fits a 32 GB stick.
+IMAGE_SIZE_MIB=20480
 TARGET_DEVICE=""
 
 STEP=0
@@ -88,31 +95,47 @@ Guided build of a PenLive USB stick.
 Options:
   --device /dev/sdX   Skip the interactive picker and use this device
   --skip-build        Reuse the existing live system, never rebuild it
+  --build-only        Build everything and write an .img, touching no device
+  --image-out PATH    Where --build-only writes its image
+  --image-size-mib N  Size of that image (default ${IMAGE_SIZE_MIB})
   --data-fs FS        exfat (default, readable on Windows) or ext4
   --persist-mib N     Persistence partition size (default ${PERSIST_MIB})
   --system-mib N      System partition size (default ${SYSTEM_MIB})
   --yes               Answer yes to every prompt EXCEPT the final erase
                       confirmation, which always requires typing the device path
+  --assume-confirmed  Skip the typed erase confirmation. Only for wrappers that
+                      have ALREADY obtained explicit confirmation from the user
+                      (scripts/make-usb.ps1 does). Never use it interactively.
   -h, --help          Show this help
 
 Examples:
   sudo ./scripts/make-usb.sh
   sudo ./scripts/make-usb.sh --device /dev/sdb --skip-build
+  sudo ./scripts/make-usb.sh --build-only --image-out dist/penlive.img
 EOF
 }
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --device)      TARGET_DEVICE="$2"; shift 2 ;;
-        --skip-build)  SKIP_BUILD=1; shift ;;
-        --data-fs)     DATA_FS="$2"; shift 2 ;;
-        --persist-mib) PERSIST_MIB="$2"; shift 2 ;;
-        --system-mib)  SYSTEM_MIB="$2"; shift 2 ;;
-        --yes)         ASSUME_YES=1; shift ;;
-        -h|--help)     usage; exit 0 ;;
-        *)             usage >&2; die "unknown option: $1" ;;
+        --device)           TARGET_DEVICE="$2"; shift 2 ;;
+        --skip-build)       SKIP_BUILD=1; shift ;;
+        --build-only)       BUILD_ONLY=1; shift ;;
+        --image-out)        IMAGE_OUT="$2"; shift 2 ;;
+        --image-size-mib)   IMAGE_SIZE_MIB="$2"; shift 2 ;;
+        --data-fs)          DATA_FS="$2"; shift 2 ;;
+        --persist-mib)      PERSIST_MIB="$2"; shift 2 ;;
+        --system-mib)       SYSTEM_MIB="$2"; shift 2 ;;
+        --yes)              ASSUME_YES=1; shift ;;
+        --assume-confirmed) ASSUME_CONFIRMED=1; shift ;;
+        -h|--help)          usage; exit 0 ;;
+        *)                  usage >&2; die "unknown option: $1" ;;
     esac
 done
+
+if [[ ${BUILD_ONLY} -eq 1 ]]; then
+    TOTAL_STEPS=4
+    [[ -n "${IMAGE_OUT}" ]] || IMAGE_OUT="${REPO_ROOT}/dist/penlive-amd64.img"
+fi
 
 # -------------------------------------------------------------- preflight ----
 
@@ -252,6 +275,36 @@ fi
 for f in vmlinuz initrd.img filesystem.squashfs; do
     [[ -f "${LIVE_OUT}/${f}" ]] || die "live build did not produce ${f}"
 done
+
+# ------------------------------------------------- 4. build-only: image ----
+
+if [[ ${BUILD_ONLY} -eq 1 ]]; then
+    step "Building a flashable image"
+
+    mkdir -p "$(dirname "${IMAGE_OUT}")"
+    info "writing ${IMAGE_OUT} (${IMAGE_SIZE_MIB} MiB)"
+
+    PYTHONPATH="${REPO_ROOT}/builder" python3 -m penlive.cli image "${IMAGE_OUT}" \
+        --size-mib "${IMAGE_SIZE_MIB}" \
+        --live-dir "${LIVE_OUT}" \
+        --grub-cfg "${REPO_ROOT}/grub/grub.cfg" \
+        --recovery-cfg "${REPO_ROOT}/grub/recovery.cfg" \
+        --catalog "${REPO_ROOT}/catalog/catalog.json" \
+        --efi-mib "${EFI_MIB}" --system-mib "${SYSTEM_MIB}" \
+        --persist-mib "${PERSIST_MIB}" --data-fs "${DATA_FS}" \
+        --log "${LOG_FILE}" \
+        2>&1 | tee -a "${LOG_FILE}" >&2 \
+        || die "image build failed - see ${LOG_FILE}"
+
+    ok "image ready at ${IMAGE_OUT}"
+    log ""
+    log "${GREEN}${BOLD}Done.${RESET} Flash it with:"
+    log "    sudo ./scripts/make-usb.sh --device /dev/sdX --skip-build"
+    log "  or on Windows:"
+    log "    .\\scripts\\make-usb.ps1 -Image <path to the image>"
+    log ""
+    exit 0
+fi
 
 # ---------------------------------------------------- 4. target device ----
 
@@ -393,11 +446,18 @@ if ask "Show the exact command plan first (dry run)?" n; then
     log ""
 fi
 
-# Always required, even under --yes: this is the irreversible step.
-[[ -t 0 ]] || die "need an interactive terminal for the erase confirmation"
-log "     Type the device path to confirm erasing it."
-read -r -p "     ${TARGET_DEVICE} > " typed </dev/tty
-[[ "${typed}" == "${TARGET_DEVICE}" ]] || die "confirmation did not match; nothing was written"
+# Always required, even under --yes: this is the irreversible step. The one
+# exception is a wrapper that already took an explicit confirmation from the
+# user for this same device (scripts/make-usb.ps1), where asking twice for the
+# same disk under two different names is confusing rather than safer.
+if [[ ${ASSUME_CONFIRMED} -eq 1 ]]; then
+    warn "erase already confirmed by the calling wrapper"
+else
+    [[ -t 0 ]] || die "need an interactive terminal for the erase confirmation"
+    log "     Type the device path to confirm erasing it."
+    read -r -p "     ${TARGET_DEVICE} > " typed </dev/tty
+    [[ "${typed}" == "${TARGET_DEVICE}" ]] || die "confirmation did not match; nothing was written"
+fi
 
 log ""
 info "writing - do not remove the stick"
