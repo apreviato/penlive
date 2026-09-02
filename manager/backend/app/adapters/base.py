@@ -16,7 +16,7 @@ from .iso import IsoImage
 
 @dataclass
 class BootConfig:
-    method: str  # "linux" | "chainload"
+    method: str  # "linux" | "chainload" | "wimboot"
     label: str
     # "linux" method: filenames only, relative to the per-image extract_dir
     # bootmanager.py placed them in — it decides the final PENSYS-absolute
@@ -28,6 +28,13 @@ class BootConfig:
     iso_rel_path: str | None = None
     # "chainload" method only: path to the ISO's own EFI loader, e.g. "EFI/BOOT/BOOTX64.EFI".
     efi_chain_path: str | None = None
+    # "wimboot" method only: the cpio member name wimboot expects -> the file
+    # name inside extract_dir, in the order GRUB should append them.
+    wim_files: dict[str, str] | None = None
+    # "wimboot" method only: directory on PENDATA (relative to that partition's
+    # root) holding the unpacked installation media, which WinPE needs to find
+    # \sources\install.wim on a filesystem it can read.
+    media_rel_path: str | None = None
 
 
 class BootAdapter(ABC):

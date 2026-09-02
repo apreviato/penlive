@@ -43,9 +43,11 @@ def test_chainload_menuentry_loads_exfat_and_loopback_modules():
 
 
 def test_unsupported_method_rejected():
-    cfg = BootConfig(method="wimboot", label="Windows 11")
+    """Refuse an unknown method rather than emitting an empty menu entry that
+    fails at boot, where there is nothing left to report it."""
+    cfg = BootConfig(method="kexec", label="Something")
     with pytest.raises(ValueError, match="unsupported boot method"):
-        render_menuentry(cfg, "win11", "Windows 11")
+        render_menuentry(cfg, "something", "Something")
 
 
 def test_menuentry_is_balanced():
@@ -56,3 +58,37 @@ def test_menuentry_is_balanced():
     text = render_menuentry(cfg, "x", "X")
     assert text.count("{") == text.count("}") == 1
     assert text.rstrip().endswith("}")
+
+
+def _wimboot_cfg():
+    return BootConfig(
+        method="wimboot", label="Windows Setup", kernel="wimboot",
+        wim_files={"bootmgfw.efi": "bootmgfw.efi", "bcd": "bcd",
+                   "boot.sdi": "boot.sdi", "boot.wim": "boot.wim"},
+        iso_rel_path="images/windows.iso", media_rel_path="windows/windows",
+    )
+
+
+def test_wimboot_menuentry_loads_the_loader_as_the_kernel():
+    text = render_menuentry(_wimboot_cfg(), "win11", "Windows 11")
+    assert "--id pending_boot" in text
+    assert "linux ($root)/boot/extracted/win11/wimboot" in text
+
+
+def test_wimboot_menuentry_passes_all_four_files_as_one_cpio():
+    """wimboot reads them out of the initrd as named members, so each needs
+    its `newc:<name>:` prefix — a plain path would arrive nameless and
+    Windows' boot manager would not find its BCD."""
+    text = render_menuentry(_wimboot_cfg(), "win11", "Windows 11")
+    initrd_line = next(ln for ln in text.splitlines() if ln.strip().startswith("initrd"))
+    for member in ("bootmgfw.efi", "bcd", "boot.sdi", "boot.wim"):
+        assert f"newc:{member}:($root)/boot/extracted/win11/{member}" in initrd_line
+
+
+def test_wimboot_member_order_is_preserved():
+    """wimboot cares about the order the members arrive in; bootmgfw.efi has
+    to come first."""
+    text = render_menuentry(_wimboot_cfg(), "win11", "Windows 11")
+    initrd_line = next(ln for ln in text.splitlines() if ln.strip().startswith("initrd"))
+    positions = [initrd_line.index(f"newc:{m}:") for m in ("bootmgfw.efi", "bcd", "boot.sdi", "boot.wim")]
+    assert positions == sorted(positions)

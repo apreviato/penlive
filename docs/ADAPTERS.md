@@ -33,7 +33,7 @@ The scale in use:
 
 ```python
 BootConfig(
-    method="linux",              # or "chainload"
+    method="linux",              # or "chainload" / "wimboot"
     label="Ubuntu",
     kernel="vmlinuz",            # file name inside extract_dir
     initrd="initrd",
@@ -61,6 +61,11 @@ the ISO's own bootloader.
 `BOOTX64.EFI`. Extracts nothing. A fallback for hybrid ISOs with no dedicated
 adapter.
 
+**`wimboot`** — Windows only. GRUB loads the wimboot binary as if it were a
+kernel, and passes `bootmgfw.efi`, the BCD, `boot.sdi` and `boot.wim` in a
+single in-memory cpio archive using GRUB's `newc:<name>:<path>` syntax. See
+"Windows" below.
+
 ## Existing adapters
 
 | Family | Signature | Score | cmdline |
@@ -70,11 +75,20 @@ adapter.
 | `proxmox` | `/boot/linux26` | 90 | `ro ramdisk_size=... findiso=` |
 | `fedora` | `/images/pxeboot/vmlinuz` | 85 | `inst.stage2=hd:LABEL=PENDATA:` |
 | `arch` | `/arch/boot/x86_64/vmlinuz-linux` | 85 | `img_dev=... img_loop=` |
+| `debian-installer` | `/install.amd/vmlinuz` | 80 | `iso-scan/filename=` |
+| `windows` | `/sources/boot.wim` | 90 | wimboot (see below) |
 | `generic` | `/EFI/BOOT/BOOTX64.EFI` | 10 | chainload |
 
 Several catalog entries reuse an existing adapter rather than needing a new
-one: Linux Mint is Ubuntu-derived and uses the casper layout, and Rocky Linux
-is RHEL-family with the Anaconda `/images/pxeboot` layout.
+one: Linux Mint is Ubuntu-derived and uses the casper layout; Rocky Linux and
+AlmaLinux are RHEL-family with the Anaconda `/images/pxeboot` layout; and
+Clonezilla Live and GParted Live are built with `live-build`, so the Debian
+adapter boots them unchanged.
+
+SystemRescue and openSUSE match none of them and fall back to
+`GenericEfiAdapter`. Chainloading a loopback-mounted ISO is best-effort — the
+target's own bootloader still has to find its media — so those two are the
+first candidates if a new adapter is worth writing.
 
 > The Arch and Proxmox `cmdline` values vary between releases. Treat them as a
 > starting point: check `/loader/entries/*.conf` or `/boot/grub/grub.cfg` inside
@@ -115,11 +129,38 @@ class MyDistroAdapter(BootAdapter):
 The tests use synthetic ISOs of a few KB (`tests/isofactory.py`) — what matters
 is testing path detection, not the payload.
 
-## Windows: why it does not exist yet
+## Windows
 
-Windows is not "another adapter". The ISO has `/sources/boot.wim`,
-`/sources/install.wim`, `/boot/bcd`, `/boot/boot.sdi` — there is no
-kernel/initrd to extract, and booting goes through **wimboot** loading WinPE,
-which only then runs `setup.exe`. It is a third `method`, with its own
-extraction and config generation. It comes after the current abstraction has
-been validated on real hardware with the Linux distributions.
+Windows is not "another Linux adapter". There is no kernel and no initrd: the
+ISO holds `/sources/boot.wim`, `/boot/boot.sdi` and a BCD store, and the
+firmware is meant to run `bootmgfw.efi`. Chainloading that from a
+loopback-mounted ISO does not work — Windows' boot manager cannot read GRUB's
+loop device — so `WindowsAdapter` uses [wimboot](https://ipxe.org/wimboot)
+(iPXE project, GPL), a small loader GRUB *can* start like a kernel.
+
+Three pieces have to line up, and only one of them is the adapter:
+
+1. **`wimboot` on PENSYS.** Debian does not package it, so the builder takes a
+   path: `penlive image --wimboot ./wimboot`. Without it the adapter raises
+   `WimbootMissing` and the image stays mount-and-VM-only rather than offering
+   a Boot button that cannot work. See [BUILD.md](BUILD.md).
+2. **The four boot files**, extracted into the per-image cache like any other
+   adapter's kernel. The BCD comes from `/efi/microsoft/boot/bcd`; the one at
+   `/boot/bcd` next to it is the BIOS variant and boots UEFI into recovery.
+3. **The ISO contents unpacked onto PENDATA**, by `services/winmedia.py`.
+   wimboot only carries WinPE; Windows Setup then looks for
+   `\sources\install.wim`, and WinPE cannot mount an ISO by itself. PENDATA
+   is exFAT, so an `install.wim` over 4 GiB fits. The inspector does this right
+   after the download, so by boot time it is already there.
+
+### UDF
+
+A Windows ISO keeps a single readme in its ISO9660 tree and everything else in
+UDF, so `IsoImage` reads UDF as well — without it an adapter sees an empty
+image. UDF names are case-sensitive and Microsoft writes them lowercase, which
+`_path_variants` handles so callers need not care.
+
+One consequence is worth knowing before changing detection scores: with UDF
+readable, `GenericEfiAdapter` also matches Windows media through
+`/efi/boot/bootx64.efi`. It scores 10 against `WindowsAdapter`'s 90, and that
+gap is what keeps Windows off a chainload that cannot boot.

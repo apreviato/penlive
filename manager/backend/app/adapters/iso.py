@@ -45,6 +45,7 @@ class IsoImage:
             raise
         self._has_joliet = bool(self._iso.joliet_vd)
         self._has_rockridge = bool(getattr(self._iso, "rock_ridge", None))
+        self._has_udf = bool(self._iso.has_udf())
 
     def close(self) -> None:
         # open_fp leaves the handle ours to close; PyCdlib.close() only closes
@@ -92,6 +93,24 @@ class IsoImage:
                 continue
         return None
 
+    def walk_udf(self) -> list[tuple[str, list[str], list[str]]]:
+        """os.walk-style listing of the UDF tree, empty when there is none.
+
+        Only UDF: this exists to unpack Windows media, and a Windows ISO keeps
+        its real contents nowhere else.
+        """
+        if not self._has_udf:
+            return []
+        return [(d, list(dirs), list(files)) for d, dirs, files in self._iso.walk(udf_path="/")]
+
+    def file_size(self, iso_path: str) -> int:
+        for kwargs in self._path_variants(iso_path):
+            try:
+                return int(self._iso.get_record(**kwargs).get_data_length())
+            except Exception:  # noqa: BLE001 - try the next ISO path convention
+                continue
+        raise FileNotFoundError(f"{iso_path!r} not found in {self.path}")
+
     def _path_variants(self, iso_path: str) -> list[dict]:
         norm = "/" + iso_path.strip("/")
         variants: list[dict] = []
@@ -99,6 +118,15 @@ class IsoImage:
             variants.append({"rr_path": norm})
         if self._has_joliet:
             variants.append({"joliet_path": norm})
+        if self._has_udf:
+            # Windows installation media puts everything in UDF and leaves a
+            # single readme in the ISO9660 tree, so without this an adapter
+            # sees an empty image. UDF names are case-sensitive and Microsoft
+            # writes them lowercase, so try that too rather than making every
+            # caller guess the casing.
+            variants.append({"udf_path": norm})
+            if norm != norm.lower():
+                variants.append({"udf_path": norm.lower()})
         upper = norm.upper()
         variants.append({"iso_path": upper + ";1" if ";" not in upper else upper})
         variants.append({"iso_path": upper})

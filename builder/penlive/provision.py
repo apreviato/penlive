@@ -19,6 +19,8 @@ class ProvisionInputs:
     grub_cfg: Path
     recovery_cfg: Path
     catalog_seed: Path | None = None
+    # The iPXE wimboot loader. Absent, Windows images stay mount-and-VM-only.
+    wimboot: Path | None = None
 
 
 def provision(
@@ -56,7 +58,8 @@ def provision(
             grubinstall.build_standalone_efi(runner, standalone_efi, mount_root / "_work")
             grubinstall.install_efi_partition(runner, efi_mp, standalone_efi)
         grubinstall.install_bootsys_files(
-            runner, bootsys_mp, grub_cfg=inputs.grub_cfg, recovery_cfg=inputs.recovery_cfg
+            runner, bootsys_mp, grub_cfg=inputs.grub_cfg,
+            recovery_cfg=inputs.recovery_cfg, wimboot=inputs.wimboot,
         )
         filesystem.copy_live_system(runner, inputs.live_dir, bootsys_mp)
         filesystem.write_persistence_conf(runner, persist_mp)

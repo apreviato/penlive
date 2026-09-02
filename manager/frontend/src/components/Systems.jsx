@@ -1,8 +1,44 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../api/client.js';
 import { formatBytes } from '../format.js';
 import ImageCard from './ImageCard.jsx';
 import PendingBootBanner from './PendingBootBanner.jsx';
+
+// What is already on the stick comes first: it is what the user can act on
+// right now, and it is a handful of entries in a catalog of dozens. Anything
+// mid-flight follows, so a running download does not jump to the bottom the
+// moment it starts.
+const ORDER = {
+  ready: 0,
+  downloaded: 0,
+  downloading: 1,
+  inspecting: 1,
+  corrupted: 2,
+  invalid: 2,
+};
+const ORDER_DEFAULT = 3;
+
+function rank(image) {
+  return ORDER[image.status] ?? ORDER_DEFAULT;
+}
+
+export function arrange(images, query) {
+  const needle = query.trim().toLowerCase();
+  const matches = needle
+    ? images.filter((img) =>
+        [img.name, img.family, img.version, img.architecture, img.id]
+          .filter(Boolean)
+          .some((field) => String(field).toLowerCase().includes(needle))
+      )
+    : images;
+  // Sorting by rank alone would be at the mercy of the sort's stability for
+  // everything else; falling back to the catalog's own order keeps the list
+  // from reshuffling under the user between refreshes.
+  return matches
+    .map((img, index) => ({ img, index }))
+    .sort((a, b) => rank(a.img) - rank(b.img) || a.index - b.index)
+    .map(({ img }) => img);
+}
 
 export default function Systems({ network, onNotice, onOpenFiles, onOpenVm }) {
   const [images, setImages] = useState([]);
@@ -11,6 +47,7 @@ export default function Systems({ network, onNotice, onOpenFiles, onOpenVm }) {
   const [error, setError] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [query, setQuery] = useState('');
 
   const load = useCallback(async () => {
     try {
@@ -80,6 +117,7 @@ export default function Systems({ network, onNotice, onOpenFiles, onOpenVm }) {
       },
     });
 
+  const shown = useMemo(() => arrange(images, query), [images, query]);
   const readyCount = images.filter((i) => i.status === 'ready' || i.status === 'downloaded').length;
   // NetworkManager's captive-portal probe is advisory: some otherwise working
   // networks block that URL. Let aria2 make the real request whenever a link
@@ -115,6 +153,22 @@ export default function Systems({ network, onNotice, onOpenFiles, onOpenVm }) {
         </button>
       </div>
 
+      <div className="catalog-search">
+        <input
+          type="search"
+          className="input"
+          placeholder="Search by name, family or version…"
+          aria-label="Search the catalog"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+        {query && (
+          <button className="btn btn-sm" onClick={() => setQuery('')}>
+            Clear
+          </button>
+        )}
+      </div>
+
       {loading && (
         <div className="empty">
           <span className="spinner" /> Loading catalog…
@@ -129,7 +183,11 @@ export default function Systems({ network, onNotice, onOpenFiles, onOpenVm }) {
         </div>
       )}
 
-      {images.map((img) => (
+      {!loading && images.length > 0 && shown.length === 0 && (
+        <div className="empty">No system matches “{query}”.</div>
+      )}
+
+      {shown.map((img) => (
         <ImageCard
           key={img.id}
           image={img}
@@ -150,7 +208,10 @@ export default function Systems({ network, onNotice, onOpenFiles, onOpenVm }) {
               )} · images use ${formatBytes(storage.images_bytes)}`
             : 'Storage unavailable'}
         </span>
-        <span>{readyCount} ready</span>
+        <span>
+          {query ? `${shown.length} of ${images.length} shown · ` : ''}
+          {readyCount} ready
+        </span>
       </div>
     </div>
   );

@@ -49,11 +49,36 @@ def _chainload_menuentry(cfg: BootConfig, label: str) -> str:
     )
 
 
+def _wimboot_menuentry(cfg: BootConfig, image_id: str, label: str) -> str:
+    """GRUB loads wimboot like a kernel, then hands Windows its four boot files
+    as one in-memory cpio archive.
+
+    The `newc:<name>:<path>` syntax is GRUB's own: each entry becomes a file of
+    that name in the archive, which is where wimboot looks for them. Their
+    order matters to wimboot, so it follows WIMBOOT_MEMBERS rather than
+    whatever order a dict happens to iterate in.
+    """
+    base = f"boot/extracted/{image_id}"
+    members = " ".join(
+        f"newc:{name}:($root)/{base}/{filename}" for name, filename in (cfg.wim_files or {}).items()
+    )
+    return (
+        f'menuentry "Pending: {label}" --id pending_boot {{\n'
+        f"    insmod ext2\n"
+        f"    search --no-floppy --set=root --label PENSYS\n"
+        f"    linux ($root)/{base}/{cfg.kernel}\n"
+        f"    initrd {members}\n"
+        f"}}\n"
+    )
+
+
 def render_menuentry(cfg: BootConfig, image_id: str, label: str) -> str:
     if cfg.method == "linux":
         return _linux_menuentry(cfg, image_id, label)
     if cfg.method == "chainload":
         return _chainload_menuentry(cfg, label)
+    if cfg.method == "wimboot":
+        return _wimboot_menuentry(cfg, image_id, label)
     raise ValueError(f"unsupported boot method {cfg.method!r}")
 
 

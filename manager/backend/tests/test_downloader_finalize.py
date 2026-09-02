@@ -225,3 +225,74 @@ async def test_watcher_survives_a_temporary_aria2_rpc_restart(monkeypatch, temp_
 
     assert calls == 2
     assert repo.get_download(download_id)["error"] == "permanent mirror error"
+
+
+TORRENT_URL = "https://kali.download/base-images/kali-2026.2/kali-linux-2026.2-live-amd64.iso.torrent"
+
+
+def test_is_torrent_only_matches_torrent_sources():
+    assert downloader.is_torrent(TORRENT_URL)
+    assert not downloader.is_torrent("https://example.invalid/debian.iso")
+    # A query string must not defeat the check, or the ISO path is taken.
+    assert downloader.is_torrent("https://example.invalid/x.torrent?mirror=eu")
+
+
+def test_torrent_output_keeps_the_vendors_file_name():
+    """aria2 names BitTorrent output from the torrent's own metadata and
+    ignores `out`, so predicting `<image_id>.iso` would leave the resume check
+    looking for a file that never exists."""
+    name = downloader._output_name({"id": "kali-2026-2-live", "source_url": TORRENT_URL})
+    assert name == "kali-linux-2026.2-live-amd64.iso"
+
+
+def test_http_output_is_still_named_after_the_image_id():
+    name = downloader._output_name({"id": "debian-13-live-standard",
+                                    "source_url": "https://example.invalid/debian-live-13.6.0.iso"})
+    assert name == "debian-13-live-standard.iso"
+
+
+@pytest.mark.asyncio
+async def test_torrent_downloads_go_through_add_torrent(monkeypatch, temp_db, tmp_path):
+    """Handing aria2 the .torrent URL instead makes it fetch the metadata as an
+    ordinary download and spawn a second gid for the contents; the watcher
+    would then declare a 400 KB .torrent file complete."""
+    monkeypatch.setattr(paths, "IMAGES_DIR", tmp_path / "images")
+    monkeypatch.setattr(paths, "DOWNLOADS_TMP_DIR", tmp_path / "images" / ".downloads")
+    repo.upsert_image_from_catalog({
+        **CATALOG_ENTRY, "id": "kali-live", "sources": [{"url": TORRENT_URL}],
+        "sha256": "aa" * 32, "size": 5531987968,
+    })
+
+    seen = {}
+
+    async def fake_fetch(url):
+        seen["fetched"] = url
+        return b"d4:infod4:name3:isoee"
+
+    async def fake_add_torrent(torrent, download_dir):
+        seen["torrent"] = torrent
+        return "gid-1"
+
+    async def fail_add_uri(*args, **kwargs):
+        raise AssertionError("a torrent source must not go through addUri")
+
+    monkeypatch.setattr(downloader, "_fetch_torrent", fake_fetch)
+    monkeypatch.setattr(aria2, "add_torrent", fake_add_torrent)
+    monkeypatch.setattr(aria2, "add_uri", fail_add_uri)
+    monkeypatch.setattr(aria2, "tell_active", _empty)
+    monkeypatch.setattr(aria2, "tell_waiting", _empty)
+    monkeypatch.setattr(aria2, "tell_stopped", _empty)
+    monkeypatch.setattr(downloader, "_watch", _never)
+
+    await downloader.start("kali-live")
+
+    assert seen["fetched"] == TORRENT_URL
+    assert seen["torrent"] == b"d4:infod4:name3:isoee"
+
+
+async def _empty():
+    return []
+
+
+async def _never(*args, **kwargs):
+    return None

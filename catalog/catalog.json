@@ -317,6 +317,514 @@
       "size": 7127195648,
       "checksum_source": "https://cdimage.ubuntu.com/ubuntustudio/releases/26.04/release/SHA256SUMS",
       "capabilities": {"nativeBoot": true, "kexec": true, "vm": true, "mount": true}
+    },
+    {
+      "id": "debian-13-live-cinnamon",
+      "name": "Debian 13 Live (Cinnamon)",
+      "family": "debian",
+      "version": "13.6.0",
+      "architecture": "amd64",
+      "adapter": "debian",
+      "sources": [
+        {
+          "url": "https://cdimage.debian.org/debian-cd/current-live/amd64/iso-hybrid/debian-live-13.6.0-amd64-cinnamon.iso"
+        }
+      ],
+      "sha256": "6427d30a7d12b3e8adab14b2ef16f743bfa4b93980cc8205dab71a69e7ffc139",
+      "size": 4115103744,
+      "checksum_source": "https://cdimage.debian.org/debian-cd/current-live/amd64/iso-hybrid/SHA256SUMS",
+      "capabilities": {
+        "nativeBoot": true,
+        "kexec": true,
+        "vm": true,
+        "mount": true
+      }
+    },
+    {
+      "id": "debian-13-live-mate",
+      "name": "Debian 13 Live (MATE)",
+      "family": "debian",
+      "version": "13.6.0",
+      "architecture": "amd64",
+      "adapter": "debian",
+      "sources": [
+        {
+          "url": "https://cdimage.debian.org/debian-cd/current-live/amd64/iso-hybrid/debian-live-13.6.0-amd64-mate.iso"
+        }
+      ],
+      "sha256": "ca7bbc36b3afd33c1bcc4b309497a3073e87b10246c7c29e7ef64e6dedb7f537",
+      "size": 3960668160,
+      "checksum_source": "https://cdimage.debian.org/debian-cd/current-live/amd64/iso-hybrid/SHA256SUMS",
+      "capabilities": {
+        "nativeBoot": true,
+        "kexec": true,
+        "vm": true,
+        "mount": true
+      }
+    },
+    {
+      "id": "debian-13-live-lxqt",
+      "name": "Debian 13 Live (LXQt)",
+      "family": "debian",
+      "version": "13.6.0",
+      "architecture": "amd64",
+      "adapter": "debian",
+      "sources": [
+        {
+          "url": "https://cdimage.debian.org/debian-cd/current-live/amd64/iso-hybrid/debian-live-13.6.0-amd64-lxqt.iso"
+        }
+      ],
+      "sha256": "e52078acc4234b53ce504fbb4e05bc8c9d8aaaa00ff24c78a30231e8b7454c69",
+      "size": 3992977408,
+      "checksum_source": "https://cdimage.debian.org/debian-cd/current-live/amd64/iso-hybrid/SHA256SUMS",
+      "capabilities": {
+        "nativeBoot": true,
+        "kexec": true,
+        "vm": true,
+        "mount": true
+      }
+    },
+    {
+      "id": "ubuntu-budgie-26-04-desktop",
+      "name": "Ubuntu Budgie 26.04.1 LTS",
+      "family": "ubuntu",
+      "version": "26.04.1",
+      "architecture": "amd64",
+      "adapter": "ubuntu",
+      "sources": [
+        {
+          "url": "https://cdimage.ubuntu.com/ubuntu-budgie/releases/26.04/release/ubuntu-budgie-26.04.1-desktop-amd64.iso"
+        }
+      ],
+      "sha256": "a0a712266e536246786a4e29f6d0d7328326b9b4b54f746202a8575208c23921",
+      "size": 4127838208,
+      "checksum_source": "https://cdimage.ubuntu.com/ubuntu-budgie/releases/26.04/release/SHA256SUMS",
+      "capabilities": {
+        "nativeBoot": true,
+        "kexec": true,
+        "vm": true,
+        "mount": true
+      }
+    },
+    {
+      "id": "linuxmint-22-3-xfce",
+      "name": "Linux Mint 22.3 Xfce",
+      "family": "mint",
+      "version": "22.3",
+      "architecture": "amd64",
+      "adapter": "ubuntu",
+      "_comment": "Ubuntu-derived: uses the casper layout, so UbuntuAdapter handles it.",
+      "sources": [
+        {
+          "url": "https://mirrors.edge.kernel.org/linuxmint/stable/22.3/linuxmint-22.3-xfce-64bit.iso"
+        }
+      ],
+      "sha256": "45a835b5dddaf40e84d776549e0b19b3fbd49673b6cc6434ebddbfcd217df776",
+      "size": 3033710592,
+      "checksum_source": "https://mirrors.edge.kernel.org/linuxmint/stable/22.3/sha256sum.txt",
+      "capabilities": {
+        "nativeBoot": true,
+        "kexec": true,
+        "vm": true,
+        "mount": true
+      }
+    },
+    {
+      "id": "linuxmint-22-3-mate",
+      "name": "Linux Mint 22.3 MATE",
+      "family": "mint",
+      "version": "22.3",
+      "architecture": "amd64",
+      "adapter": "ubuntu",
+      "_comment": "Ubuntu-derived: uses the casper layout, so UbuntuAdapter handles it.",
+      "sources": [
+        {
+          "url": "https://mirrors.edge.kernel.org/linuxmint/stable/22.3/linuxmint-22.3-mate-64bit.iso"
+        }
+      ],
+      "sha256": "7609294da613b75eea89bb918292125e9f06418a368136fb190466e15bf8c373",
+      "size": 3134275584,
+      "checksum_source": "https://mirrors.edge.kernel.org/linuxmint/stable/22.3/sha256sum.txt",
+      "capabilities": {
+        "nativeBoot": true,
+        "kexec": true,
+        "vm": true,
+        "mount": true
+      }
+    },
+    {
+      "id": "fedora-44-kde",
+      "name": "Fedora 44 KDE Plasma Desktop",
+      "family": "fedora",
+      "version": "44-1.7",
+      "architecture": "x86_64",
+      "adapter": "fedora",
+      "sources": [
+        {
+          "url": "https://dl.fedoraproject.org/pub/fedora/linux/releases/44/KDE/x86_64/iso/Fedora-KDE-Desktop-Live-44-1.7.x86_64.iso"
+        }
+      ],
+      "sha256": "c8295961d4c41adbf785a31a17c21a971d3b7415fda72dcad0c11c49577bf03a",
+      "size": 3368683520,
+      "checksum_source": "https://dl.fedoraproject.org/pub/fedora/linux/releases/44/KDE/x86_64/iso/Fedora-KDE-44-1.7-x86_64-CHECKSUM",
+      "capabilities": {
+        "nativeBoot": true,
+        "kexec": true,
+        "vm": true,
+        "mount": true
+      }
+    },
+    {
+      "id": "fedora-44-cosmic",
+      "name": "Fedora 44 COSMIC",
+      "family": "fedora",
+      "version": "44-1.7",
+      "architecture": "x86_64",
+      "adapter": "fedora",
+      "sources": [
+        {
+          "url": "https://dl.fedoraproject.org/pub/fedora/linux/releases/44/Spins/x86_64/iso/Fedora-COSMIC-Live-44-1.7.x86_64.iso"
+        }
+      ],
+      "sha256": "86ed49a1f0c32ab3e19846b692b0a1b35fa827154069f32b1ec0e08d42bb20e6",
+      "size": 3166636032,
+      "checksum_source": "https://dl.fedoraproject.org/pub/fedora/linux/releases/44/Spins/x86_64/iso/Fedora-Spins-44-1.7-x86_64-CHECKSUM",
+      "capabilities": {
+        "nativeBoot": true,
+        "kexec": true,
+        "vm": true,
+        "mount": true
+      }
+    },
+    {
+      "id": "almalinux-10-minimal",
+      "name": "AlmaLinux 10.2 Minimal",
+      "family": "almalinux",
+      "version": "10.2",
+      "architecture": "x86_64",
+      "adapter": "fedora",
+      "_comment": "RHEL-family Anaconda installer: /images/pxeboot layout, so FedoraAdapter handles it.",
+      "sources": [
+        {
+          "url": "https://repo.almalinux.org/almalinux/10/isos/x86_64/AlmaLinux-10.2-x86_64-minimal.iso"
+        }
+      ],
+      "sha256": "1b532f534231da0d1cd0ccae622bea6cd588d8a0d7b259f1f131501a6eed41a4",
+      "size": 1651376128,
+      "checksum_source": "https://repo.almalinux.org/almalinux/10/isos/x86_64/CHECKSUM",
+      "capabilities": {
+        "nativeBoot": true,
+        "kexec": true,
+        "vm": true,
+        "mount": true
+      }
+    },
+    {
+      "id": "clonezilla-live-stable",
+      "name": "Clonezilla Live 3.3.3-15",
+      "family": "clonezilla",
+      "version": "3.3.3-15",
+      "architecture": "amd64",
+      "adapter": "debian",
+      "_comment": "Debian Live layout (/live/vmlinuz), so DebianLiveAdapter handles it. Disk cloning and imaging, the companion to the Backup and Restore plugins.",
+      "sources": [
+        {
+          "url": "https://free.nchc.org.tw/clonezilla-live/stable/clonezilla-live-3.3.3-15-amd64.iso"
+        }
+      ],
+      "sha256": "482518ea32af3b82ed15d09e2e7714806775deb62aeed81491e534f6cc6bbc47",
+      "size": 572522496,
+      "checksum_source": "https://free.nchc.org.tw/clonezilla-live/stable/CHECKSUMS.TXT",
+      "capabilities": {
+        "nativeBoot": true,
+        "kexec": true,
+        "vm": true,
+        "mount": true
+      }
+    },
+    {
+      "id": "gparted-live-stable",
+      "name": "GParted Live 1.8.1-6",
+      "family": "gparted",
+      "version": "1.8.1-6",
+      "architecture": "amd64",
+      "adapter": "debian",
+      "_comment": "Debian Live layout (/live/vmlinuz), so DebianLiveAdapter handles it. Partition editing, the companion to the Disk Repair plugin.",
+      "sources": [
+        {
+          "url": "https://downloads.sourceforge.net/gparted/gparted-live-1.8.1-6-amd64.iso"
+        }
+      ],
+      "sha256": "d789c38779f0d6f7026c12f44c2c52a04f66e28a1aea7d51f3045ad1bbf28411",
+      "size": 720371712,
+      "checksum_source": "https://gparted.org/gparted-live/stable/CHECKSUMS.TXT",
+      "capabilities": {
+        "nativeBoot": true,
+        "kexec": true,
+        "vm": true,
+        "mount": true
+      }
+    },
+    {
+      "id": "systemrescue-13",
+      "name": "SystemRescue 13.02",
+      "family": "systemrescue",
+      "version": "13.02",
+      "architecture": "amd64",
+      "adapter": "generic",
+      "_comment": "archiso-derived, but its kernel lives under /sysresccd/ where ArchAdapter does not look, so it falls back to GenericEfiAdapter chainload. The registry re-detects at boot time, so this field is advisory.",
+      "sources": [
+        {
+          "url": "https://fastly-cdn.system-rescue.org/releases/13.02/systemrescue-13.02-amd64.iso"
+        }
+      ],
+      "sha256": "ad4d670b72859d887c7960142a9a9d36a3e50446694a035e254442f65d6e7572",
+      "size": 1381629952,
+      "checksum_source": "https://fastly-cdn.system-rescue.org/releases/13.02/systemrescue-13.02-amd64.iso.sha256",
+      "capabilities": {
+        "nativeBoot": true,
+        "kexec": false,
+        "vm": true,
+        "mount": true
+      }
+    },
+    {
+      "id": "opensuse-tumbleweed-dvd",
+      "name": "openSUSE Tumbleweed (DVD)",
+      "family": "opensuse",
+      "version": "20260830",
+      "architecture": "x86_64",
+      "adapter": "generic",
+      "_comment": "No dedicated adapter yet; boots via GenericEfiAdapter chainload. The registry re-detects at boot time, so this field is advisory.",
+      "sources": [
+        {
+          "url": "https://download.opensuse.org/tumbleweed/iso/openSUSE-Tumbleweed-DVD-x86_64-Current.iso"
+        }
+      ],
+      "sha256": "36cbfa307ba860b8926437c844b25e929b33a4cd2343a2afbbb0d9c0ae39f988",
+      "size": 4544528384,
+      "checksum_source": "https://download.opensuse.org/tumbleweed/iso/openSUSE-Tumbleweed-DVD-x86_64-Current.iso.sha256",
+      "checksum_filename_pattern": "openSUSE-Tumbleweed-DVD-x86_64-Snapshot\\d{8}-Media\\.iso",
+      "version_pattern": "openSUSE-Tumbleweed-DVD-x86_64-Snapshot(\\d{8})-Media\\.iso",
+      "_warning": "`Current` is a rolling alias, like Arch's: it redirects to a new snapshot every few days with a new sha256, size and file name. Re-run tools/update_catalog.py after each one or downloads will fail verification.",
+      "capabilities": {
+        "nativeBoot": true,
+        "kexec": false,
+        "vm": true,
+        "mount": true
+      }
+    },
+    {
+      "id": "proxmox-backup-server-4-2",
+      "name": "Proxmox Backup Server 4.2",
+      "family": "proxmox",
+      "version": "4.2-1",
+      "architecture": "amd64",
+      "adapter": "proxmox",
+      "sources": [
+        {
+          "url": "https://enterprise.proxmox.com/iso/proxmox-backup-server_4.2-1.iso"
+        }
+      ],
+      "sha256": "2fb299deac3929253712c9c3dfc9237edbe70af83c8848467616b771a1d5453e",
+      "size": 1480032256,
+      "checksum_source": "https://enterprise.proxmox.com/iso/proxmox-backup-server_4.2-1.iso.sha256",
+      "capabilities": {
+        "nativeBoot": true,
+        "kexec": false,
+        "vm": true,
+        "mount": true
+      }
+    },
+    {
+      "id": "kali-2026-2-installer",
+      "name": "Kali Linux 2026.2 Installer",
+      "family": "kali",
+      "version": "2026.2",
+      "architecture": "amd64",
+      "adapter": "debian-installer",
+      "_comment": "debian-installer layout (/install.amd/), so DebianInstallerAdapter handles it: it reuses the arguments from the ISO's own grub.cfg, which is where Kali preseeds its package selection.",
+      "sources": [
+        {
+          "url": "https://kali.download/base-images/kali-2026.2/kali-linux-2026.2-installer-amd64.iso"
+        }
+      ],
+      "sha256": "6dbefacc95e3b556c19c48e8bae39b8b505e2d3a1aba0bfb7ab62b036c3d2ba3",
+      "size": 4802531328,
+      "checksum_source": "https://kali.download/base-images/kali-2026.2/SHA256SUMS",
+      "capabilities": {
+        "nativeBoot": true,
+        "kexec": true,
+        "vm": true,
+        "mount": true
+      }
+    },
+    {
+      "id": "kali-2026-2-netinst",
+      "name": "Kali Linux 2026.2 Netinstall",
+      "family": "kali",
+      "version": "2026.2",
+      "architecture": "amd64",
+      "adapter": "debian-installer",
+      "_comment": "debian-installer layout (/install.amd/), so DebianInstallerAdapter handles it: it reuses the arguments from the ISO's own grub.cfg, which is where Kali preseeds its package selection. Downloads the packages during the install, so it needs a network.",
+      "sources": [
+        {
+          "url": "https://kali.download/base-images/kali-2026.2/kali-linux-2026.2-installer-netinst-amd64.iso"
+        }
+      ],
+      "sha256": "d32f929dacc48134a31461a09f2160d13ad1d26b820cee920446813ca979b39b",
+      "size": 779091968,
+      "checksum_source": "https://kali.download/base-images/kali-2026.2/SHA256SUMS",
+      "capabilities": {
+        "nativeBoot": true,
+        "kexec": true,
+        "vm": true,
+        "mount": true
+      }
+    },
+    {
+      "id": "centos-stream-10-dvd",
+      "name": "CentOS Stream 10 (DVD)",
+      "family": "centos",
+      "version": "10-stream",
+      "architecture": "x86_64",
+      "adapter": "fedora",
+      "_comment": "RHEL-family Anaconda installer: /images/pxeboot layout, so FedoraAdapter handles it. Red Hat's own upstream for RHEL 10; RHEL itself needs a subscription login, so it cannot be fetched unattended.",
+      "sources": [
+        {
+          "url": "https://mirror.stream.centos.org/10-stream/BaseOS/x86_64/iso/CentOS-Stream-10-latest-x86_64-dvd1.iso"
+        }
+      ],
+      "sha256": "65e11b5d35e6bf94b391945381794262343b2694a0fad1ef85ed7663b127a947",
+      "size": 10761207808,
+      "checksum_source": "https://mirror.stream.centos.org/10-stream/BaseOS/x86_64/iso/CentOS-Stream-10-latest-x86_64-dvd1.iso.SHA256SUM",
+      "_warning": "`latest` is a rolling alias: every CentOS Stream compose gives it a new sha256 and size. Re-run tools/update_catalog.py before shipping.",
+      "capabilities": {
+        "nativeBoot": true,
+        "kexec": true,
+        "vm": true,
+        "mount": true
+      }
+    },
+    {
+      "id": "centos-stream-10-boot",
+      "name": "CentOS Stream 10 (netinstall)",
+      "family": "centos",
+      "version": "10-stream",
+      "architecture": "x86_64",
+      "adapter": "fedora",
+      "_comment": "RHEL-family Anaconda installer: /images/pxeboot layout, so FedoraAdapter handles it. Pulls the packages over the network during the install.",
+      "sources": [
+        {
+          "url": "https://mirror.stream.centos.org/10-stream/BaseOS/x86_64/iso/CentOS-Stream-10-latest-x86_64-boot.iso"
+        }
+      ],
+      "sha256": "a3ae0bb3bbac8c07b42d2d1093504ec233fc998246580bc15ecbbb415a3dc3d6",
+      "size": 936071168,
+      "checksum_source": "https://mirror.stream.centos.org/10-stream/BaseOS/x86_64/iso/CentOS-Stream-10-latest-x86_64-boot.iso.SHA256SUM",
+      "_warning": "`latest` is a rolling alias: every CentOS Stream compose gives it a new sha256 and size. Re-run tools/update_catalog.py before shipping.",
+      "capabilities": {
+        "nativeBoot": true,
+        "kexec": true,
+        "vm": true,
+        "mount": true
+      }
+    },
+    {
+      "id": "fedora-44-server",
+      "name": "Fedora 44 Server",
+      "family": "fedora",
+      "version": "44-1.7",
+      "architecture": "x86_64",
+      "adapter": "fedora",
+      "_comment": "RHEL-family Anaconda installer: /images/pxeboot layout, so FedoraAdapter handles it.",
+      "sources": [
+        {
+          "url": "https://dl.fedoraproject.org/pub/fedora/linux/releases/44/Server/x86_64/iso/Fedora-Server-dvd-x86_64-44-1.7.iso"
+        }
+      ],
+      "sha256": "85837793bfa36db6bc709b4cecd2ec116951b87d9c53c3d95eb2fac8dcf7cf1f",
+      "size": 3913023488,
+      "checksum_source": "https://dl.fedoraproject.org/pub/fedora/linux/releases/44/Server/x86_64/iso/Fedora-Server-44-1.7-x86_64-CHECKSUM",
+      "capabilities": {
+        "nativeBoot": true,
+        "kexec": true,
+        "vm": true,
+        "mount": true
+      }
+    },
+    {
+      "id": "windows-11-enterprise-eval",
+      "name": "Windows 11 Enterprise 25H2 Evaluation (en-US)",
+      "family": "windows",
+      "version": "25H2 (26200.6584)",
+      "architecture": "x64",
+      "adapter": "windows",
+      "_comment": "Booted through wimboot rather than a kernel and initrd: WindowsAdapter hands WinPE the four files it needs, and services/winmedia.py unpacks the ISO onto PENDATA so Setup can find its install.wim. Needs a stick built with --wimboot; without it the image is still downloadable, mountable and runnable in the VM.",
+      "sources": [
+        {
+          "url": "https://software-static.download.prss.microsoft.com/dbazure/888969d5-f34g-4e03-ac9d-1f9786c66749/26200.6584.250915-1905.25h2_ge_release_svc_refresh_CLIENTENTERPRISEEVAL_OEMRET_x64FRE_en-us.iso"
+        }
+      ],
+      "sha256": "a61adeab895ef5a4db436e0a7011c92a2ff17bb0357f58b13bbc4062e535e7b9",
+      "size": 7092807680,
+      "checksum_source": "https://cdn-dynmedia-1.microsoft.com/is/content/microsoftcorp/microsoft/bade/documents/products-and-services/en-us/owned-and-operated/Verify-Download-Win11-Enterprise.pdf",
+      "checksum_manual": true,
+      "_warning": "Microsoft publishes this hash only in a PDF, so tools/update_catalog.py cannot re-derive it \u2014 hence checksum_manual. When Microsoft refreshes the evaluation build the URL, size and hash all change together: re-read the PDF and update all three by hand.",
+      "capabilities": {
+        "nativeBoot": true,
+        "kexec": false,
+        "vm": true,
+        "mount": true
+      }
+    },
+    {
+      "id": "windows-11-enterprise-eval-ptbr",
+      "name": "Windows 11 Enterprise 25H2 Evaluation (pt-BR)",
+      "family": "windows",
+      "version": "25H2 (26200.6584)",
+      "architecture": "x64",
+      "adapter": "windows",
+      "_comment": "Booted through wimboot rather than a kernel and initrd: WindowsAdapter hands WinPE the four files it needs, and services/winmedia.py unpacks the ISO onto PENDATA so Setup can find its install.wim. Needs a stick built with --wimboot; without it the image is still downloadable, mountable and runnable in the VM.",
+      "sources": [
+        {
+          "url": "https://software-static.download.prss.microsoft.com/dbazure/888969d5-f34g-4e03-ac9d-1f9786c66749/26200.6584.250915-1905.25h2_ge_release_svc_refresh_CLIENTENTERPRISEEVAL_OEMRET_x64FRE_pt-br.iso"
+        }
+      ],
+      "sha256": "a5d6a86a9553bb730d1b723233108e90c1b9499f7284137218865919d4189ddd",
+      "size": 7033266176,
+      "checksum_source": "https://cdn-dynmedia-1.microsoft.com/is/content/microsoftcorp/microsoft/bade/documents/products-and-services/en-us/owned-and-operated/Verify-Download-Win11-Enterprise.pdf",
+      "checksum_manual": true,
+      "_warning": "Microsoft publishes this hash only in a PDF, so tools/update_catalog.py cannot re-derive it \u2014 hence checksum_manual. When Microsoft refreshes the evaluation build the URL, size and hash all change together: re-read the PDF and update all three by hand.",
+      "capabilities": {
+        "nativeBoot": true,
+        "kexec": false,
+        "vm": true,
+        "mount": true
+      }
+    },
+    {
+      "id": "kali-2026-2-live",
+      "name": "Kali Linux 2026.2 Live",
+      "family": "kali",
+      "version": "2026.2",
+      "architecture": "amd64",
+      "adapter": "debian",
+      "_comment": "Debian Live layout (/live/vmlinuz), so DebianLiveAdapter handles it. Downloaded over BitTorrent because Kali publishes no HTTP mirror for the live build - only the .torrent - which is why the source URL is not an ISO.",
+      "sources": [
+        {
+          "url": "https://kali.download/base-images/kali-2026.2/kali-linux-2026.2-live-amd64.iso.torrent"
+        }
+      ],
+      "sha256": "49e90e694d1b3dedd47f94afbe99dfdd5afb41c8462b638bbd332929769c773a",
+      "size": 5531987968,
+      "checksum_source": "https://kali.download/base-images/kali-2026.2/SHA256SUMS",
+      "capabilities": {
+        "nativeBoot": true,
+        "kexec": true,
+        "vm": true,
+        "mount": true
+      }
     }
   ]
 }

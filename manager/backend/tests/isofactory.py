@@ -53,9 +53,21 @@ def build_iso(dest: Path, files: dict[str, bytes], *, joliet: bool = True, rock_
 
 
 def _iso_name(path: str, *, is_dir: bool) -> str:
-    """ISO9660 level-1 names: uppercase, and files carry a ;1 version suffix."""
-    upper = path.upper().replace("-", "_")
-    return upper if is_dir else f"{upper};1"
+    """ISO9660 level-1 names: uppercase, and files carry a ;1 version suffix.
+
+    Directory components lose their dots too — ISO9660 allows one only in a
+    file name, so `/install.amd/` has to become `/INSTALL_AMD/`. Real images
+    have the same constraint and carry the true name in Rock Ridge, which is
+    the variant `IsoImage` tries first, so adapters still look it up by its
+    real path.
+    """
+    parts = [p.upper().replace("-", "_") for p in path.strip("/").split("/")]
+    if parts:
+        parts[:-1] = [p.replace(".", "_") for p in parts[:-1]]
+        if is_dir:
+            parts[-1] = parts[-1].replace(".", "_")
+    joined = "/" + "/".join(parts)
+    return joined if is_dir else f"{joined};1"
 
 
 UBUNTU_FILES = {
@@ -94,6 +106,69 @@ UNKNOWN_FILES = {
     "/random/data.bin": b"nothing bootable here",
 }
 
+# Kali's own /boot/grub/grub.cfg, trimmed to the one line the adapter reads.
+DEBIAN_INSTALLER_GRUB_CFG = b"""\
+set theme=/boot/grub/theme/1
+menuentry --hotkey=g 'Graphical install' {
+    linux    /install.amd/vmlinuz net.ifnames=0 preseed/file=/cdrom/simple-cdd/default.preseed vga=788 --- quiet
+    initrd   /install.amd/gtk/initrd.gz
+}
+menuentry --hotkey=i 'Install' {
+    linux    /install.amd/vmlinuz net.ifnames=0 preseed/file=/cdrom/simple-cdd/default.preseed vga=788 --- quiet
+    initrd   /install.amd/initrd.gz
+}
+"""
+
+DEBIAN_INSTALLER_FILES = {
+    "/install.amd/vmlinuz": b"fake-d-i-kernel",
+    "/install.amd/initrd.gz": b"fake-d-i-initrd",
+    "/boot/grub/grub.cfg": DEBIAN_INSTALLER_GRUB_CFG,
+    "/EFI/BOOT/BOOTX64.EFI": b"fake-efi",
+}
+
+# A Debian live image ships the installer too; the live session must still win.
+DEBIAN_LIVE_WITH_INSTALLER_FILES = {**DEBIAN_LIVE_FILES, **DEBIAN_INSTALLER_FILES}
+
+WINDOWS_UDF_FILES = {
+    "/sources/boot.wim": b"fake-boot-wim",
+    "/sources/install.wim": b"fake-install-wim",
+    "/boot/boot.sdi": b"fake-sdi",
+    "/boot/bcd": b"fake-bcd",
+    "/efi/microsoft/boot/bcd": b"fake-efi-bcd",
+    "/efi/boot/bootx64.efi": b"fake-bootmgfw",
+    "/setup.exe": b"fake-setup",
+}
+
+
+def build_windows_iso(dest: Path, files: dict[str, bytes] | None = None) -> Path:
+    """Mimic a Windows installation ISO: the payload lives in UDF, and the
+    ISO9660 tree holds nothing but a readme.
+
+    That shape is the whole point of the fixture. `IsoImage` reads Rock Ridge,
+    Joliet and plain ISO9660 but never UDF, so none of these files are visible
+    to an adapter — which is exactly why no adapter claims Windows media.
+    """
+    files = WINDOWS_UDF_FILES if files is None else files
+    iso = pycdlib.PyCdlib()
+    iso.new(interchange_level=3, udf="2.60")
+    iso.add_fp(io.BytesIO(b"readme"), 6, iso_path="/README.TXT;1")
+
+    made: set[str] = set()
+    for path in files:
+        parts = path.strip("/").split("/")
+        for depth in range(1, len(parts)):
+            d = "/" + "/".join(parts[:depth])
+            if d not in made:
+                made.add(d)
+                iso.add_directory(udf_path=d)
+
+    for path, content in files.items():
+        iso.add_fp(io.BytesIO(content), len(content), udf_path="/" + path.strip("/"))
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    iso.write(str(dest))
+    iso.close()
+    return dest
 
 # ---- chained Rock Ridge continuation areas ----------------------------------
 

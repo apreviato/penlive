@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import errno
 from pathlib import Path
 
@@ -7,9 +8,10 @@ from fastapi import APIRouter, HTTPException
 
 from .. import paths, repo
 from ..adapters import IsoParseError, NoAdapterMatched, prepare_boot
+from ..adapters.windows import WimbootMissing
 from ..daemon import client as daemon_client
 from ..schemas import BootRequest, PendingBootOut
-from ..services import bootmanager, secureboot
+from ..services import bootmanager, secureboot, winmedia
 
 router = APIRouter(prefix="/api/boot", tags=["boot"])
 
@@ -66,9 +68,13 @@ async def schedule_boot(body: BootRequest):
         raise HTTPException(422, "no boot adapter matched this image; try Mount or Run VM instead")
     except IsoParseError as exc:
         raise HTTPException(422, f"{exc}; try Mount or Run VM instead") from exc
+    except WimbootMissing as exc:
+        raise HTTPException(422, str(exc)) from exc
     except daemon_client.DaemonUnavailable as exc:
         raise HTTPException(503, str(exc))
     except OSError as exc:
+        # Supersedes the old PermissionError branch: EACCES/EPERM land in
+        # _NOT_WRITABLE too, and this message says what to actually do.
         if exc.errno in _NOT_WRITABLE:
             raise HTTPException(500, (
                 f"PenLive's boot partition ({paths.BOOT_MOUNT}) is not writable, so the kernel could "
@@ -82,12 +88,25 @@ async def schedule_boot(body: BootRequest):
     if body.method not in ("auto", cfg.method):
         raise HTTPException(422, f"this image only supports method={cfg.method!r}, not {body.method!r}")
 
+    # Normally the inspector unpacked this right after the download, so the
+    # check is instant. It only actually copies when that never ran or the
+    # unpacked tree was removed, and then WinPE would come up with no
+    # \sources\install.wim to install from.
+    if cfg.media_rel_path and not winmedia.is_staged(iso_path, cfg.media_rel_path):
+        try:
+            await asyncio.to_thread(winmedia.stage, iso_path, cfg.media_rel_path)
+        except (winmedia.NotEnoughSpace, OSError) as exc:
+            raise HTTPException(422, f"could not unpack the Windows installation media: {exc}") from exc
+
     # Under Secure Boot, a kernel extracted from someone else's ISO is signed
     # by Canonical or Red Hat, which shim does not trust - GRUB would refuse to
     # start it. Signing it with this machine's own enrolled key makes it
     # bootable; sbsign appends, so the vendor signature is left intact.
     signed_with_mok = False
-    if cfg.method == "linux" and secureboot.is_enabled():
+    # wimboot is an unsigned loader from the iPXE project, so it needs the
+    # machine owner key just as much as a kernel lifted out of someone else's
+    # ISO does; both sit in the extracted-boot cache under the same name.
+    if cfg.kernel and secureboot.is_enabled():
         sb_state = secureboot.state()
         if not sb_state["key_enrolled"]:
             raise HTTPException(409, {

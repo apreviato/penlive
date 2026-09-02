@@ -1534,3 +1534,21 @@ select.input {
   margin: 10px 0 0 18px;
   line-height: 1.8;
 }
+
+.catalog-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+/* The kiosk browser has no address bar to fall back on, so the field takes the
+   width and the Clear button only appears once there is something to clear. */
+.catalog-search .input {
+  flex: 1;
+}
+
+.catalog-search input[type='search']::-webkit-search-cancel-button {
+  filter: invert(0.6);
+  cursor: pointer;
+}

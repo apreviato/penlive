@@ -1,17 +1,22 @@
 import pytest
 
 from app.adapters import NoAdapterMatched, detect_adapter, prepare_boot
+from app.adapters import windows
 from app.adapters.iso import IsoImage
+from app.adapters.windows import WimbootMissing
 
 from isofactory import (
     ARCH_FILES,
+    DEBIAN_INSTALLER_FILES,
     DEBIAN_LIVE_FILES,
+    DEBIAN_LIVE_WITH_INSTALLER_FILES,
     FEDORA_FILES,
     GENERIC_EFI_FILES,
     PROXMOX_FILES,
     UBUNTU_FILES,
     UNKNOWN_FILES,
     build_iso,
+    build_windows_iso,
 )
 
 
@@ -97,3 +102,100 @@ def test_iso_image_missing_file_raises(tmp_path):
     with IsoImage(iso_path) as iso:
         with pytest.raises(FileNotFoundError):
             iso.extract_file("/does/not/exist", tmp_path / "out")
+
+
+def test_detect_debian_installer(tmp_path):
+    iso_path = build_iso(tmp_path / "kali.iso", DEBIAN_INSTALLER_FILES)
+    assert detect_adapter(iso_path).family == "debian-installer"
+
+
+def test_debian_live_beats_the_installer_on_a_live_image(tmp_path):
+    """Debian's live images carry /install.amd/ as well. Booting one into the
+    installer instead of the live session would be a silent downgrade of what
+    the user picked from the catalog."""
+    iso_path = build_iso(tmp_path / "debian-live.iso", DEBIAN_LIVE_WITH_INSTALLER_FILES)
+    assert detect_adapter(iso_path).family == "debian"
+
+
+def test_prepare_debian_installer_reuses_the_isos_own_arguments(tmp_path):
+    """Kali preseeds its package selection on the ISO's own `linux` line; a
+    generic cmdline would boot a plain Debian installer instead."""
+    iso_path = build_iso(tmp_path / "kali.iso", DEBIAN_INSTALLER_FILES)
+    extract_dir = tmp_path / "extracted"
+    adapter, cfg = prepare_boot(iso_path, extract_dir, "images/kali.iso")
+
+    assert adapter.family == "debian-installer"
+    assert cfg.method == "linux"
+    assert (extract_dir / cfg.kernel).read_bytes() == b"fake-d-i-kernel"
+    assert (extract_dir / cfg.initrd).read_bytes() == b"fake-d-i-initrd"
+    assert "preseed/file=/cdrom/simple-cdd/default.preseed" in cfg.cmdline
+    assert "iso-scan/filename=/images/kali.iso" in cfg.cmdline
+
+
+def test_debian_installer_puts_iso_scan_before_the_separator(tmp_path):
+    """Everything after `---` goes to the installed system's kernel, so
+    iso-scan placed there is read by the wrong kernel and the installer never
+    finds its media."""
+    iso_path = build_iso(tmp_path / "kali.iso", DEBIAN_INSTALLER_FILES)
+    _, cfg = prepare_boot(iso_path, tmp_path / "ex", "images/kali.iso")
+    assert cfg.cmdline.index("iso-scan/filename=") < cfg.cmdline.index("---")
+
+
+def test_debian_installer_without_a_grub_cfg_still_boots(tmp_path):
+    files = {k: v for k, v in DEBIAN_INSTALLER_FILES.items() if k != "/boot/grub/grub.cfg"}
+    iso_path = build_iso(tmp_path / "plain.iso", files)
+    _, cfg = prepare_boot(iso_path, tmp_path / "ex", "images/plain.iso")
+    assert "iso-scan/filename=/images/plain.iso" in cfg.cmdline
+
+
+def test_windows_media_needs_wimboot_on_pensys(tmp_path, monkeypatch):
+    """Without the loader there is nothing to start, and the right answer is a
+    clear message rather than a menu entry pointing at a missing file."""
+    iso_path = build_windows_iso(tmp_path / "windows.iso")
+    monkeypatch.setattr(windows, "WIMBOOT_BIN", tmp_path / "absent" / "wimboot")
+    assert detect_adapter(iso_path).family == "windows"
+    with pytest.raises(WimbootMissing):
+        prepare_boot(iso_path, tmp_path / "ex", "images/windows.iso")
+
+
+def test_prepare_windows_collects_the_four_wimboot_files(tmp_path, monkeypatch):
+    wimboot = tmp_path / "pensys" / "wimboot"
+    wimboot.parent.mkdir()
+    wimboot.write_bytes(b"fake-wimboot-loader")
+    monkeypatch.setattr(windows, "WIMBOOT_BIN", wimboot)
+
+    iso_path = build_windows_iso(tmp_path / "windows.iso")
+    extract_dir = tmp_path / "extracted"
+    adapter, cfg = prepare_boot(iso_path, extract_dir, "images/windows.iso")
+
+    assert adapter.family == "windows"
+    assert cfg.method == "wimboot"
+    # Copied into the extracted cache so Secure Boot signing, which refuses
+    # anything outside it, can sign the loader.
+    assert (extract_dir / cfg.kernel).read_bytes() == b"fake-wimboot-loader"
+    assert set(cfg.wim_files) == {"bootmgfw.efi", "bcd", "boot.sdi", "boot.wim"}
+    assert (extract_dir / "boot.wim").read_bytes() == b"fake-boot-wim"
+    # The UEFI BCD, not the BIOS one sitting at /boot/bcd.
+    assert (extract_dir / "bcd").read_bytes() == b"fake-efi-bcd"
+
+
+def test_windows_beats_generic_efi(tmp_path, monkeypatch):
+    """Windows media carries /efi/boot/bootx64.efi, which GenericEfiAdapter
+    matches once IsoImage can read UDF. Chainloading it cannot work — Windows'
+    boot manager cannot read GRUB's loop device — so wimboot has to win."""
+    wimboot = tmp_path / "wimboot"
+    wimboot.write_bytes(b"loader")
+    monkeypatch.setattr(windows, "WIMBOOT_BIN", wimboot)
+    iso_path = build_windows_iso(tmp_path / "windows.iso")
+    assert detect_adapter(iso_path).family == "windows"
+
+
+def test_iso_image_reads_udf_paths(tmp_path):
+    """Everything on Windows media lives in UDF; without this an adapter sees
+    an image containing nothing but a readme."""
+    iso_path = build_windows_iso(tmp_path / "windows.iso")
+    with IsoImage(iso_path) as iso:
+        assert iso.exists("/sources/install.wim")
+        assert iso.file_size("/sources/boot.wim") == len(b"fake-boot-wim")
+        # Callers should not have to know that Microsoft writes them lowercase.
+        assert iso.exists("/EFI/Boot/bootx64.efi")

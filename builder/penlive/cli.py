@@ -81,6 +81,7 @@ def _provision_inputs(args: argparse.Namespace) -> ProvisionInputs:
         grub_cfg=Path(args.grub_cfg),
         recovery_cfg=Path(args.recovery_cfg),
         catalog_seed=Path(args.catalog) if args.catalog else None,
+        wimboot=Path(args.wimboot) if args.wimboot else None,
     )
 
 
@@ -213,6 +214,11 @@ def _add_provision_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--grub-cfg", default="grub/grub.cfg")
     p.add_argument("--recovery-cfg", default="grub/recovery.cfg")
     p.add_argument("--catalog", default="catalog/catalog.json")
+    p.add_argument(
+        "--wimboot",
+        default=None,
+        help="path to the iPXE wimboot binary; without it Windows images can only be mounted or run in the VM",
+    )
     p.add_argument("--mount-root", default=str(DEFAULT_MOUNT_ROOT))
     p.add_argument("--log", default=None, help="append a command audit log to this path")
     p.add_argument("--dry-run", action="store_true")

@@ -54,9 +54,9 @@ it fails.
 | # | Label | FS | Size | Contents |
 |---|---|---|---|---|
 | 1 | `PENEFI` | FAT32 | 512 M | `EFI/BOOT/BOOTX64.EFI` |
-| 2 | `PENSYS` | ext4 | 4 G | `live/` + `boot/state/` + `boot/extracted/` |
+| 2 | `PENSYS` | ext4 | 4 G | `live/` + `boot/state/` + `boot/extracted/` + `boot/wimboot` |
 | 3 | `persistence` | ext4 | 8 G | live-boot's OverlayFS |
-| 4 | `PENDATA` | exFAT | rest | `images/`, `catalog/`, `logs/` |
+| 4 | `PENDATA` | exFAT | rest | `images/`, `windows/`, `catalog/`, `logs/` |
 
 Four decisions worth explaining:
 
@@ -68,7 +68,9 @@ entire boot chain is not worth risking on that.
 **PENDATA is exFAT anyway.** It is the partition a user sees when plugging the
 stick into any Windows/macOS/Linux machine to copy an ISO across by hand.
 Nothing GRUB must read at boot lives there — except in the `chainload` method,
-which is exactly why that is the only one doing `insmod exfat`.
+which is exactly why that is the only one doing `insmod exfat`. exFAT earns its
+keep a second time for Windows: WinPE can read it, and an `install.wim` larger
+than 4 GiB fits, which is why `windows/` holds the unpacked Setup media.
 
 **ISOs ≠ persistence.** Downloads go to `PENDATA`, system state to
 `persistence`. A factory reset (reformat `persistence`, recreate
@@ -343,6 +345,13 @@ extraction and native Boot without running ISO parsing as root.
 project hosts no ISOs at all. Fallback order: remote → cache on `PENDATA` →
 the copy bundled in the squashfs. Offline, the UI still shows the catalog.
 
+Not every image arrives over HTTP. Kali publishes its live build as a torrent
+only, so a source URL ending in `.torrent` is handed to aria2 as BitTorrent
+metadata rather than as a URL — passing the URL would make aria2 download the
+`.torrent` as an ordinary file and spawn a second, separately identified
+download for the contents, which the progress watcher would never see. The
+SHA-256 check afterwards is the same one every other image gets.
+
 Maintaining hashes by hand is how this kind of catalog rots: the distribution
 ships a point release, the URL starts serving a different file, and every
 download fails verification. `tools/update_catalog.py` fetches each vendor's
@@ -353,6 +362,12 @@ and Fedora's BSD-style `SHA256 (file) = hash` inside a PGP-signed block).
 Entries whose URL is a rolling alias — Arch's `latest/archlinux-x86_64.iso` —
 also carry a `version_pattern`, because otherwise the hash gets corrected on
 every run while the version shown in the UI silently rots.
+
+Some of those aliases do not even keep the same file name: openSUSE serves
+`...-Current.iso`, but its checksum file names the snapshot the alias currently
+points at, so looking up the URL's own file name finds nothing and the entry
+would report drift forever. Those carry a `checksum_filename_pattern` that
+matches the real name instead.
 
 ## Development mode
 
@@ -387,10 +402,13 @@ ownership, which DrvFs cannot represent.
 
 In the order it makes sense to tackle:
 
-1. **Windows / wimboot** — not "another adapter": a completely different boot
-   method (WIM/WinPE, BCD, `boot.sdi`). It comes after the adapter abstraction
-   has been validated on hardware with the Linux distributions.
-2. **A/B updates of the manager** — `system-a.squashfs` / `system-b.squashfs`
+1. **A/B updates of the manager** — `system-a.squashfs` / `system-b.squashfs`
    with GRUB rollback. The partition layout already reserves room for it.
-3. **Legacy BIOS** — only if a real need appears. Supporting UEFI x86-64 alone
+2. **Legacy BIOS** — only if a real need appears. Supporting UEFI x86-64 alone
    eliminates an enormous number of special cases.
+
+Windows *is* implemented now, through wimboot — a third boot method alongside
+`linux` and `chainload`, described in [ADAPTERS.md](ADAPTERS.md#windows). It is
+the least-proven part of the codebase: synthetic-ISO tests cover the file
+selection and the generated menu entry, but nothing here has started a real
+WinPE. Treat QEMU as the first real test.
