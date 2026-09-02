@@ -14,22 +14,47 @@ from __future__ import annotations
 import shutil
 import subprocess
 import tempfile
+import threading
 from collections.abc import Iterator
 from pathlib import Path
 
-from .operations import OperationError, require_choice, require_device
+from .operations import (
+    OperationError,
+    require_choice,
+    require_device,
+    require_partition,
+    require_unmounted,
+)
 
 CHROOT_BIND_MOUNTS = ("/dev", "/dev/pts", "/proc", "/sys")
+_context = threading.local()
+
+
+def set_process_callback(callback=None) -> None:
+    """Expose a procedure's active child process to the owning job thread."""
+    _context.process_callback = callback
 
 
 def _run(argv: list[str], *, check: bool = True) -> Iterator[str]:
     """Run one command, streaming its combined output as log lines."""
     yield f"$ {' '.join(argv)}"
-    proc = subprocess.run(argv, capture_output=True, text=True)
-    for line in (proc.stdout or "").splitlines():
-        yield line
-    for line in (proc.stderr or "").splitlines():
-        yield line
+    proc = subprocess.Popen(
+        argv,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+    callback = getattr(_context, "process_callback", None)
+    if callback:
+        callback(proc)
+    try:
+        for line in proc.stdout or ():
+            yield line.rstrip("\n")
+        proc.wait()
+    finally:
+        if callback:
+            callback(None)
     if check and proc.returncode != 0:
         raise OperationError(f"command failed (exit {proc.returncode}): {' '.join(argv)}")
 
@@ -61,10 +86,10 @@ def _umount_chroot(target: Path, esp_device: str | None) -> Iterator[str]:
 
 def linux_repair(args: dict) -> Iterator[str]:
     """Reinstall GRUB and/or regenerate the initramfs inside an installed Linux."""
-    root_device = require_device(args, "root_device")
+    root_device = require_unmounted(require_partition(args, "root_device"))
     esp_device = args.get("esp_device") or None
     if esp_device:
-        esp_device = require_device(args, "esp_device")
+        esp_device = require_unmounted(require_partition(args, "esp_device"))
 
     action = require_choice(
         args, "action", {"reinstall_grub", "update_initramfs", "both"}, default="reinstall_grub"
@@ -86,11 +111,11 @@ def linux_repair(args: dict) -> Iterator[str]:
                 "--bootloader-id=GRUB", "--recheck",
             ])
             yield "Regenerating grub.cfg"
-            yield from _run(["chroot", str(target), "update-grub"], check=False)
+            yield from _run(["chroot", str(target), "update-grub"])
 
         if action in ("update_initramfs", "both"):
             yield "Regenerating initramfs"
-            yield from _run(["chroot", str(target), "update-initramfs", "-u", "-k", "all"], check=False)
+            yield from _run(["chroot", str(target), "update-initramfs", "-u", "-k", "all"])
 
         yield "Linux repair finished."
     finally:
@@ -113,7 +138,7 @@ def windows_repair(args: dict) -> Iterator[str]:
 
     Anything deeper needs Windows' own recovery media, and the log says so.
     """
-    windows_device = require_device(args, "windows_device")
+    windows_device = require_unmounted(require_partition(args, "windows_device"))
     action = require_choice(args, "action", {"fix_filesystem", "restore_efi_boot"}, default="fix_filesystem")
 
     if action == "fix_filesystem":
@@ -124,7 +149,7 @@ def windows_repair(args: dict) -> Iterator[str]:
         yield "recovery media - a full chkdsk cannot be performed from Linux."
         return
 
-    esp_device = require_device(args, "esp_device")
+    esp_device = require_unmounted(require_partition(args, "esp_device"))
     win_mount = Path(tempfile.mkdtemp(prefix="penlive-win-"))
     esp_mount = Path(tempfile.mkdtemp(prefix="penlive-esp-"))
     try:
@@ -237,8 +262,55 @@ def _compare_prefix(image_path: Path, device: str, size: int, chunk: int = 4 * 1
     return True
 
 
+def hardware_report(args: dict) -> Iterator[str]:
+    """A fixed, read-only inventory suitable for copying into a support request."""
+    sections = (
+        ("Kernel and CPU", ["uname", "-a"]),
+        ("Memory", ["free", "-h"]),
+        ("Disks and filesystems", [
+            "lsblk", "-e7", "-o", "NAME,SIZE,TYPE,FSTYPE,LABEL,MOUNTPOINTS,MODEL,TRAN,RO",
+        ]),
+        ("PCI devices and drivers", ["lspci", "-nnk"]),
+        ("USB devices", ["lsusb"]),
+    )
+    for title, argv in sections:
+        yield ""
+        yield f"=== {title} ==="
+        yield from _run(argv, check=False)
+
+
+def network_diagnostics(args: dict) -> Iterator[str]:
+    """Read-only diagnostics with fixed public probes and no caller-controlled argv."""
+    checks = (
+        ("NetworkManager", ["nmcli", "general", "status"]),
+        ("Interfaces", ["nmcli", "device", "status"]),
+        ("Addresses", ["ip", "-brief", "address"]),
+        ("Routes", ["ip", "route"]),
+        ("DNS", ["getent", "ahosts", "deb.debian.org"]),
+        ("IP reachability", ["ping", "-c", "3", "-W", "2", "1.1.1.1"]),
+        ("HTTPS reachability", [
+            "curl", "-I", "--max-time", "8", "--silent", "--show-error", "https://deb.debian.org/",
+        ]),
+    )
+    for title, argv in checks:
+        yield ""
+        yield f"=== {title} ==="
+        yield from _run(argv, check=False)
+
+
+PROCEDURE_REQUIREMENTS = {
+    "linux_repair": ("mount", "umount", "chroot"),
+    "windows_repair": ("mount", "umount", "ntfsfix", "cp"),
+    "provision_apply": ("wipefs", "dd", "sync"),
+    "hardware_report": ("uname", "free", "lsblk", "lspci", "lsusb"),
+    "network_diagnostics": ("nmcli", "ip", "getent", "ping", "curl"),
+}
+
+
 PROCEDURES = {
     "linux_repair": linux_repair,
     "windows_repair": windows_repair,
     "provision_apply": provision_apply,
+    "hardware_report": hardware_report,
+    "network_diagnostics": network_diagnostics,
 }

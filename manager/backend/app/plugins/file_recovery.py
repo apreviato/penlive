@@ -21,7 +21,7 @@ class FileRecoveryPlugin(Plugin):
         Param(
             name="device",
             label="Source drive or partition",
-            type="device",
+            type="block_device",
             help="Scanned read-only. Recovered files are written to the PenLive stick, never back to the source.",
         ),
         Param(

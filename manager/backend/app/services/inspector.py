@@ -8,6 +8,7 @@ purely a "surface problems early" step, not the only place it happens.
 """
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 
@@ -24,6 +25,8 @@ def process_downloaded_image(image_id: str, iso_path: Path) -> None:
         adapter, _cfg = prepare_boot(iso_path, extract_dir, iso_rel_path)
     except NoAdapterMatched:
         log.warning("no boot adapter matched %s; leaving as downloaded (mount-only)", iso_path)
-        repo.set_image_status(image_id, "downloaded")
+        image = repo.get_image(image_id) or {}
+        capabilities = {**(image.get("capabilities") or {}), "nativeBoot": False, "mount": True, "vm": True}
+        repo.set_image_status(image_id, "downloaded", capabilities_json=json.dumps(capabilities))
         return
     repo.set_image_status(image_id, "ready", adapter=adapter.family)

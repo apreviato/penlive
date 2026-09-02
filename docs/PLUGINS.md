@@ -1,6 +1,6 @@
 # Tools (plugins)
 
-The Tools tab exposes eight capabilities for backup, diagnostics, repair,
+The Tools tab exposes ten capabilities for backup, diagnostics, repair,
 recovery and provisioning. All of them run privileged work, so the interesting
 part of this document is how that is kept safe.
 
@@ -38,6 +38,9 @@ directly:
 | Choices are validated against enums | no caller-supplied string ever becomes a flag |
 | Filenames are reduced to a basename and re-rooted | `../../etc/shadow` becomes `shadow` under `backups/` |
 | Whole-disk writes reuse the builder's guards | refuses partitions and the running system disk |
+| Disk and partition arguments are distinct | SMART cannot receive a partition; filesystem tools cannot receive a whole disk |
+| Filesystem writers require an unmounted partition | prevents repair, backup or restore against a live mounted filesystem |
+| Existing backup/recovery destinations are refused | never silently overwrites prior results |
 
 ## Available tools
 
@@ -51,6 +54,8 @@ directly:
 | Windows Repair | Repair | caution | `ntfsfix`, restore of Windows EFI boot files |
 | Deleted File Recovery | Recovery | safe | `photorec` (source is read-only) |
 | Provision Machine | Provisioning | **destructive** | `dd` + optional answer-file seed + verify |
+| Hardware Report | Diagnostics | safe | fixed `uname`, `free`, `lsblk`, `lspci`, `lsusb` inventory |
+| Network Diagnostics | Diagnostics | safe | fixed NetworkManager, address, route, DNS, ping and HTTPS checks |
 
 Backups are written to `backups/` and recovered files to `recovered/` on the
 PENDATA partition, so they survive reboots and a factory reset of the
@@ -63,8 +68,8 @@ persistence layer.
   warning when one is selected. They are deliberately **listed rather than
   hidden**: a user doing recovery may legitimately need to inspect the stick,
   but must never image over it by accident.
-- Mounted partitions are flagged, since imaging a mounted filesystem produces
-  an inconsistent copy.
+- Mounted partitions are flagged in the UI and rejected again by the daemon,
+  since imaging or repairing a mounted filesystem is unsafe.
 - A tool whose underlying binary is missing is greyed out and names the missing
   package, instead of accepting a form that could only fail.
 
@@ -82,7 +87,7 @@ Privileged work runs as a job in the daemon, not in the request:
 
 - `POST /api/tools/<id>/run` → `{id, state: "running", ...}`
 - `WS /api/jobs/<id>/stream` → snapshots roughly once a second
-- `POST /api/jobs/<id>/cancel` → terminates, then kills after 5s
+- `POST /api/jobs/<id>/cancel` → terminates the active command, then kills after 5s
 
 Job logs are capped at 2000 lines, keeping the head and the most recent tail. A
 PhotoRec pass over a large disk emits hundreds of thousands of lines, and the

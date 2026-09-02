@@ -10,6 +10,9 @@ async function request(path, options = {}) {
     try {
       const body = await res.json();
       detail = body.detail ?? detail;
+      if (detail && typeof detail === 'object') {
+        detail = detail.message || detail.error || JSON.stringify(detail);
+      }
     } catch {
       // Non-JSON error body (e.g. a proxy timeout page); statusText is the best we have.
     }
@@ -49,23 +52,49 @@ export const api = {
 
   // images / catalog
   listImages: () => request('/api/images'),
+  rescanImages: () => request('/api/images/rescan', { method: 'POST' }),
   refreshCatalog: () => request('/api/catalog/refresh', { method: 'POST' }),
   deleteImage: (id) => request(`/api/images/${id}`, { method: 'DELETE' }),
   storage: () => request('/api/storage'),
+
+  // PENDATA file manager
+  fileSources: () => request('/api/files/sources'),
+  listFiles: (path = '', source = 'pendata') =>
+    request(`/api/files?source=${encodeURIComponent(source)}&path=${encodeURIComponent(path)}`),
+  createFolder: (parent, name, source = 'pendata') =>
+    request('/api/files/folder', { method: 'POST', body: JSON.stringify({ source, parent, name }) }),
+  renameFile: (path, name, source = 'pendata') =>
+    request('/api/files/rename', { method: 'POST', body: JSON.stringify({ source, path, name }) }),
+  deleteFile: (path, recursive = false, source = 'pendata') =>
+    request(`/api/files?source=${encodeURIComponent(source)}&path=${encodeURIComponent(path)}&recursive=${recursive}`, { method: 'DELETE' }),
+  transferFile: (source, path, destination, destinationPath, move = false) =>
+    request('/api/files/transfer', {
+      method: 'POST',
+      body: JSON.stringify({ source, path, destination, destination_path: destinationPath, move }),
+    }),
+  mountDevice: (device) =>
+    request('/api/files/device/mount', { method: 'POST', body: JSON.stringify({ device }) }),
+  unmountDevice: (device) =>
+    request('/api/files/device/unmount', { method: 'POST', body: JSON.stringify({ device }) }),
 
   startDownload: (imageId) =>
     request('/api/downloads', { method: 'POST', body: JSON.stringify({ image_id: imageId }) }),
   cancelDownload: (imageId) => request(`/api/downloads/${imageId}/cancel`, { method: 'POST' }),
 
   // boot
-  scheduleBoot: (imageId) =>
-    request('/api/boot', { method: 'POST', body: JSON.stringify({ image_id: imageId, method: 'auto' }) }),
+  scheduleBoot: (imageId, allowUnverified = false) =>
+    request('/api/boot', {
+      method: 'POST',
+      body: JSON.stringify({ image_id: imageId, method: 'auto', allow_unverified: allowUnverified }),
+    }),
   pendingBoot: () => request('/api/boot/pending'),
   clearPendingBoot: () => request('/api/boot/pending', { method: 'DELETE' }),
 
   startVm: (imageId) =>
     request('/api/vm/start', { method: 'POST', body: JSON.stringify({ image_id: imageId }) }),
+  stopVm: (imageId) => request(`/api/vm/${imageId}/stop`, { method: 'POST' }),
   mountImage: (imageId) => request(`/api/mount/${imageId}`, { method: 'POST' }),
+  unmountImage: (imageId) => request(`/api/mount/${imageId}`, { method: 'DELETE' }),
 
   // tools / plugins
   listTools: () => request('/api/tools'),

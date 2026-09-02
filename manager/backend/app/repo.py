@@ -12,6 +12,8 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     d = dict(row)
     if "capabilities_json" in d:
         d["capabilities"] = json.loads(d.pop("capabilities_json") or "{}")
+    if "verified" in d:
+        d["verified"] = bool(d["verified"])
     return d
 
 
@@ -19,18 +21,21 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
 
 def upsert_image_from_catalog(entry: dict[str, Any]) -> None:
     with transaction() as conn:
-        existing = conn.execute("SELECT status, path, sha256 FROM images WHERE id = ?", (entry["id"],)).fetchone()
+        existing = conn.execute(
+            "SELECT status, path, sha256, verified FROM images WHERE id = ?", (entry["id"],)
+        ).fetchone()
         conn.execute(
             """
             INSERT INTO images (id, name, family, version, architecture, adapter, source_url,
-                                 sha256, size_bytes, capabilities_json, status)
+                                 sha256, size_bytes, capabilities_json, status, verified, origin)
             VALUES (:id, :name, :family, :version, :architecture, :adapter, :source_url,
-                    :sha256, :size_bytes, :capabilities_json, :status)
+                    :sha256, :size_bytes, :capabilities_json, :status, :verified, 'catalog')
             ON CONFLICT(id) DO UPDATE SET
                 name=excluded.name, family=excluded.family, version=excluded.version,
                 architecture=excluded.architecture, adapter=excluded.adapter,
                 source_url=excluded.source_url, sha256=excluded.sha256,
                 size_bytes=excluded.size_bytes, capabilities_json=excluded.capabilities_json,
+                origin='catalog',
                 updated_at=datetime('now')
             """,
             {
@@ -45,7 +50,25 @@ def upsert_image_from_catalog(entry: dict[str, Any]) -> None:
                 "size_bytes": entry.get("size"),
                 "capabilities_json": json.dumps(entry.get("capabilities", {})),
                 "status": existing["status"] if existing else "not_downloaded",
+                "verified": existing["verified"] if existing else 0,
             },
+        )
+
+
+def upsert_local_image(image_id: str, name: str, path: str, size_bytes: int) -> None:
+    """Register an ISO copied directly into PENDATA/images."""
+    with transaction() as conn:
+        conn.execute(
+            """
+            INSERT INTO images (id, name, family, architecture, path, size_bytes,
+                                capabilities_json, status, verified, origin)
+            VALUES (?, ?, 'local', 'amd64', ?, ?, ?, 'inspecting', 0, 'local')
+            ON CONFLICT(id) DO UPDATE SET
+                name=excluded.name, path=excluded.path, size_bytes=excluded.size_bytes,
+                origin='local', updated_at=datetime('now')
+            """,
+            (image_id, name, path, size_bytes,
+             json.dumps({"nativeBoot": True, "vm": True, "mount": True})),
         )
 
 

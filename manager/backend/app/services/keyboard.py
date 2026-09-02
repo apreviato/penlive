@@ -100,14 +100,13 @@ async def set_layout(layout: str, variant: str | None) -> dict[str, str | None]:
         raise ValueError(f"unknown keyboard layout: {layout}")
 
     repo.set_setting(SETTING_LAYOUT, layout)
-    if variant:
-        repo.set_setting(SETTING_VARIANT, variant)
+    repo.set_setting(SETTING_VARIANT, variant or "")
 
     applied = False
     try:
         result = await daemon_client.call("set_keyboard", layout=layout, variant=variant or "")
         applied = bool(result.get("persisted"))
-    except daemon_client.DaemonUnavailable:
+    except (daemon_client.DaemonUnavailable, RuntimeError):
         pass
 
     return {**current(), "applied": applied}

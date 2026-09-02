@@ -471,6 +471,10 @@ if (-not $usedPassthrough) {
         Fail ("disk $DiskNumber holds {0:N1} GiB but the image needs {1:N1} GiB" -f ($disk.Size/1GB), ($imageBytes/1GB))
     }
 
+    # Populated while writing so the normal verification path can revisit only
+    # bytes that were actually sent to the USB. VerifyOnly has no preceding
+    # write pass, so it falls back to scanning the supplied image.
+    $writtenRanges = $null
     if ($VerifyOnly) {
         # $bufferSize is set inside the write block, which is skipped here.
         $bufferSize = 4MB
@@ -486,6 +490,7 @@ if (-not $usedPassthrough) {
         Note "all-zero blocks are skipped; only the ~1-2 GiB that carries data is written"
     }
     $bufferSize = 4MB
+    $writtenRanges = [System.Collections.Generic.List[object]]::new()
     $source = $null; $target = $null
     try {
         $source = [System.IO.File]::OpenRead($imageItem.FullName)
@@ -495,6 +500,8 @@ if (-not $usedPassthrough) {
         $zero = New-Object byte[] $bufferSize
         $processed = 0L
         $written = 0L
+        $rangeStart = 0L
+        $rangeLength = 0L
         $sw = [Diagnostics.Stopwatch]::StartNew()
         while ($true) {
             $read = $source.Read($buffer, 0, $bufferSize)
@@ -514,10 +521,21 @@ if (-not $usedPassthrough) {
             }
 
             if ($isZero) {
+                # Close the preceding non-zero run. Coalescing adjacent blocks
+                # keeps the verification plan compact even with -FullWrite.
+                if ($rangeLength -gt 0) {
+                    $writtenRanges.Add([pscustomobject]@{
+                        Offset = [int64]$rangeStart
+                        Length = [int64]$rangeLength
+                    })
+                    $rangeLength = 0L
+                }
                 $target.Seek($read, [System.IO.SeekOrigin]::Current) | Out-Null
             } else {
+                if ($rangeLength -eq 0) { $rangeStart = $processed }
                 $target.Write($buffer, 0, $read)
                 $written += $read
+                $rangeLength += $read
             }
             $processed += $read
 
@@ -527,6 +545,12 @@ if (-not $usedPassthrough) {
                 -Status ("{0:N1} / {1:N1} GiB scanned - {2:N2} GiB written - {3} MB/s" -f `
                     ($processed/1GB), ($imageBytes/1GB), ($written/1GB), $mbps) `
                 -PercentComplete ([int](($processed/$imageBytes)*100))
+        }
+        if ($rangeLength -gt 0) {
+            $writtenRanges.Add([pscustomobject]@{
+                Offset = [int64]$rangeStart
+                Length = [int64]$rangeLength
+            })
         }
         # No SetLength here: a physical drive has a fixed size and rejects it.
         # Seeking over trailing zeroes simply leaves those sectors untouched,
@@ -556,50 +580,94 @@ if (-not $usedPassthrough) {
                 [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
             $bufA = New-Object byte[] $bufferSize
             $bufB = New-Object byte[] $bufferSize
-            $zeroBuf = New-Object byte[] $bufferSize
-            $checked = 0L; $mismatch = $false
-            while ($checked -lt $imageBytes) {
-                # [int64] on both arguments picks Math::Min(Int64, Int64).
-                # Without it PowerShell selects the Int32 overload from
-                # $bufferSize and then fails converting the remaining byte
-                # count, so verification died on the first block of any image
-                # larger than 2 GiB. The result always fits an Int32 because it
-                # is capped at $bufferSize, which Read() requires.
-                $want = [int][Math]::Min([int64]$bufferSize, $imageBytes - $checked)
-                $a = $source.Read($bufA, 0, $want)
-                if ($a -le 0) { break }
+            $mismatch = $false
 
-                # Blocks that were skipped on write were never sent to the
-                # device, so reading them back proves nothing. Verifying them
-                # would also mean reading the entire 57 GiB, which costs as
-                # much as the write we just avoided.
-                if (-not $FullWrite -and $a -eq $bufferSize -and
-                    [System.Linq.Enumerable]::SequenceEqual([byte[]]$bufA, [byte[]]$zeroBuf)) {
-                    $target.Seek($a, [System.IO.SeekOrigin]::Current) | Out-Null
+            if ($null -ne $writtenRanges) {
+                # Fast path after a write: verify every byte sent to the USB,
+                # using the exact ranges discovered during that write. This
+                # avoids scanning tens of GiB of sparse zeroes a second time.
+                $verifyTotal = [int64]$written
+                $verified = 0L
+                foreach ($range in $writtenRanges) {
+                    $source.Seek([int64]$range.Offset, [System.IO.SeekOrigin]::Begin) | Out-Null
+                    $target.Seek([int64]$range.Offset, [System.IO.SeekOrigin]::Begin) | Out-Null
+                    $remaining = [int64]$range.Length
+
+                    while ($remaining -gt 0) {
+                        $want = [int][Math]::Min([int64]$bufferSize, $remaining)
+
+                        # Both ordinary files and raw devices may return short
+                        # reads. Refill both buffers before comparing them.
+                        $a = 0
+                        while ($a -lt $want) {
+                            $n = $source.Read($bufA, $a, $want - $a)
+                            if ($n -le 0) { break }
+                            $a += $n
+                        }
+                        $b = 0
+                        while ($b -lt $want) {
+                            $n = $target.Read($bufB, $b, $want - $b)
+                            if ($n -le 0) { break }
+                            $b += $n
+                        }
+
+                        if ($a -ne $want -or $b -ne $want -or
+                            -not [System.Linq.Enumerable]::SequenceEqual([byte[]]$bufA, [byte[]]$bufB)) {
+                            $mismatch = $true
+                            break
+                        }
+
+                        $remaining -= $want
+                        $verified += $want
+                        $percent = 100
+                        if ($verifyTotal -gt 0) { $percent = [int](($verified/$verifyTotal)*100) }
+                        Write-Progress -Activity "Verifying disk $DiskNumber" `
+                            -Status ("{0:N2} / {1:N2} GiB of written data" -f ($verified/1GB), ($verifyTotal/1GB)) `
+                            -PercentComplete $percent
+                    }
+                    if ($mismatch) { break }
+                }
+                $verifiedDescription = ("{0:N2} GiB of written data" -f ($verified/1GB))
+            } else {
+                # Standalone -VerifyOnly: there is no write-time range map, so
+                # scan the image to find its meaningful (non-zero) blocks.
+                $zeroBuf = New-Object byte[] $bufferSize
+                $checked = 0L
+                $verified = 0L
+                while ($checked -lt $imageBytes) {
+                    $want = [int][Math]::Min([int64]$bufferSize, $imageBytes - $checked)
+                    $a = $source.Read($bufA, 0, $want)
+                    if ($a -le 0) { break }
+
+                    if (-not $FullWrite -and $a -eq $bufferSize -and
+                        [System.Linq.Enumerable]::SequenceEqual([byte[]]$bufA, [byte[]]$zeroBuf)) {
+                        $target.Seek($a, [System.IO.SeekOrigin]::Current) | Out-Null
+                        $checked += $a
+                        continue
+                    }
+
+                    $b = 0
+                    while ($b -lt $a) {
+                        $n = $target.Read($bufB, $b, $a - $b)
+                        if ($n -le 0) { break }
+                        $b += $n
+                    }
+                    if ($b -ne $a -or
+                        -not [System.Linq.Enumerable]::SequenceEqual([byte[]]$bufA, [byte[]]$bufB)) {
+                        $mismatch = $true
+                        break
+                    }
                     $checked += $a
-                    continue
+                    $verified += $a
+                    Write-Progress -Activity "Verifying disk $DiskNumber" `
+                        -Status ("{0:N1} / {1:N1} GiB scanned" -f ($checked/1GB), ($imageBytes/1GB)) `
+                        -PercentComplete ([int](($checked/$imageBytes)*100))
                 }
-                # Raw device reads can come back short; refill before comparing
-                # or the mismatch would be alignment, not corruption.
-                $b = 0
-                while ($b -lt $a) {
-                    $n = $target.Read($bufB, $b, $a - $b)
-                    if ($n -le 0) { break }
-                    $b += $n
-                }
-                if ($b -ne $a) { $mismatch = $true; break }
-                for ($i = 0; $i -lt $a; $i++) {
-                    if ($bufA[$i] -ne $bufB[$i]) { $mismatch = $true; break }
-                }
-                if ($mismatch) { break }
-                $checked += $a
-                Write-Progress -Activity "Verifying disk $DiskNumber" `
-                    -Status ("{0:N1} / {1:N1} GiB" -f ($checked/1GB), ($imageBytes/1GB)) `
-                    -PercentComplete ([int](($checked/$imageBytes)*100))
+                $verifiedDescription = ("{0:N2} GiB of non-zero data" -f ($verified/1GB))
             }
             Write-Progress -Activity "Verifying disk $DiskNumber" -Completed
             if ($mismatch) { Fail "verification FAILED - do not boot this stick; write it again" }
-            Good ("verified {0:N1} GiB" -f ($checked/1GB))
+            Good "verified $verifiedDescription"
         } catch {
             Fail "verification error: $($_.Exception.Message)"
         } finally {

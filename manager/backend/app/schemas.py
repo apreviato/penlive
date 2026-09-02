@@ -23,6 +23,9 @@ class ImageOut(BaseModel):
     sha256: str | None = None
     size_bytes: int | None = None
     status: str
+    verified: bool = False
+    origin: str = "catalog"
+    inspection_error: str | None = None
     source_url: str | None = None
     capabilities: dict[str, Any] = {}
 
@@ -52,6 +55,8 @@ class WifiNetwork(BaseModel):
 
 class NetworkStatus(BaseModel):
     connected: bool
+    internet: bool | None = None
+    connectivity: str | None = None
     ssid: str | None = None
     ip_address: str | None = None
     interface: str | None = None
@@ -65,6 +70,7 @@ class WifiConnectRequest(BaseModel):
 class BootRequest(BaseModel):
     image_id: str
     method: Literal["linux", "chainload", "auto"] = "auto"
+    allow_unverified: bool = False
 
 
 class VmRequest(BaseModel):
@@ -96,3 +102,37 @@ class StorageOut(BaseModel):
 
 class SettingsOut(BaseModel):
     settings: dict[str, str]
+
+
+class FileFolderRequest(BaseModel):
+    parent: str = ""
+    name: str
+
+
+class FileRenameRequest(BaseModel):
+    path: str
+    name: str
+
+
+class FileFolderSourceRequest(BaseModel):
+    source: str = "pendata"
+    parent: str = ""
+    name: str
+
+
+class FileRenameSourceRequest(BaseModel):
+    source: str = "pendata"
+    path: str
+    name: str
+
+
+class FileTransferRequest(BaseModel):
+    source: str
+    path: str
+    destination: str
+    destination_path: str = ""
+    move: bool = False
+
+
+class DeviceMountRequest(BaseModel):
+    device: str

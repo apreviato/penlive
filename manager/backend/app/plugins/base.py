@@ -25,7 +25,7 @@ class Param:
     """One field in the auto-generated parameter form."""
     name: str
     label: str
-    type: Literal["device", "partition", "text", "select", "backup_image", "checkbox"]
+    type: Literal["device", "partition", "block_device", "text", "select", "backup_image", "checkbox"]
     required: bool = True
     default: Any = None
     help: str | None = None
@@ -54,6 +54,10 @@ class Plugin(ABC):
     # user submit a form that can only fail.
     required_tools: tuple[str, ...] = ()
     params: tuple[Param, ...] = ()
+    # Optional per-select requirements. The API removes choices whose exact
+    # filesystem utility is absent instead of advertising a form that can only
+    # fail after submission.
+    option_requirements: dict[str, dict[str, tuple[str, ...]]] = {}
 
     @abstractmethod
     def build_job(self, values: dict[str, Any]) -> JobSpec:

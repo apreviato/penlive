@@ -18,6 +18,8 @@ async def mount_image(image_id: str):
         mountpoint = await mounts_service.mount(image_id, image["path"])
     except daemon_client.DaemonUnavailable as exc:
         raise HTTPException(503, str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(400, f"could not mount image: {exc}") from exc
     return {"mountpoint": mountpoint}
 
 

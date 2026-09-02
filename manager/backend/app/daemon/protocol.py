@@ -15,6 +15,8 @@ ALLOWED_COMMANDS = {
     "ping",
     "mount_image",
     "umount",
+    "mount_device",
+    "umount_device",
     "write_nextboot",
     "clear_nextboot",
     "reboot",
@@ -31,6 +33,11 @@ ALLOWED_COMMANDS = {
     "run_operation",
     "list_operations",
     "set_keyboard",
+    # NetworkManager control needs root/polkit privileges on the live system.
+    # These remain fixed operations; there is no generic nmcli/command surface.
+    "network_scan",
+    "network_status",
+    "network_connect",
     # Secure Boot. `sign_kernel` only ever signs a file inside the extracted
     # boot cache with the machine's own key - it cannot be pointed elsewhere.
     "mok_setup",

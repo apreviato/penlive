@@ -50,8 +50,25 @@
     <right>0</right>
   </margins>
 
-  <!-- Empty on purpose: replaces Openbox's default keybindings with none. -->
+  <!-- Explicit no-op bindings consume shortcuts before Chromium sees them.
+       An empty section merely removes Openbox's defaults; it does not stop the
+       browser from handling Alt+F4, Ctrl+N, Ctrl+L, and similar shortcuts. -->
   <keyboard>
+    <keybind key="A-F4"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="A-Tab"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="W-d"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="C-f"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="C-l"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="C-n"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="C-o"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="C-p"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="C-r"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="C-s"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="C-t"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="C-w"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="F5"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="F11"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="F12"><action name="Execute"><command>/bin/true</command></action></keybind>
   </keyboard>
 
   <!-- Empty on purpose: no root menu, no titlebar actions, no window dragging. -->

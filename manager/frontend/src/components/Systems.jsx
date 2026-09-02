@@ -4,7 +4,7 @@ import { formatBytes } from '../format.js';
 import ImageCard from './ImageCard.jsx';
 import PendingBootBanner from './PendingBootBanner.jsx';
 
-export default function Systems({ onNotice }) {
+export default function Systems({ network, onNotice, onOpenFiles, onOpenVm }) {
   const [images, setImages] = useState([]);
   const [storage, setStorage] = useState(null);
   const [pending, setPending] = useState(null);
@@ -71,6 +71,10 @@ export default function Systems({ onNotice }) {
     });
 
   const readyCount = images.filter((i) => i.status === 'ready' || i.status === 'downloaded').length;
+  // NetworkManager's captive-portal probe is advisory: some otherwise working
+  // networks block that URL. Let aria2 make the real request whenever a link
+  // is connected instead of disabling Download on a false negative.
+  const online = Boolean(network?.connected);
 
   return (
     <div className="content">
@@ -80,6 +84,15 @@ export default function Systems({ onNotice }) {
           <button className="btn btn-sm" onClick={() => setError(null)}>
             Dismiss
           </button>
+        </div>
+      )}
+
+      {network && !network.connected && (
+        <div className="banner banner-warning offline-banner">
+          <span>
+            <strong>{network.connected ? 'No internet access.' : 'You’re offline.'}</strong>
+            {' '}Reconnect in Settings before downloading a new system.
+          </span>
         </div>
       )}
 
@@ -110,9 +123,12 @@ export default function Systems({ onNotice }) {
         <ImageCard
           key={img.id}
           image={img}
+          online={online}
           onChanged={load}
           onError={setError}
           onNotice={onNotice}
+          onOpenFiles={onOpenFiles}
+          onOpenVm={onOpenVm}
         />
       ))}
 

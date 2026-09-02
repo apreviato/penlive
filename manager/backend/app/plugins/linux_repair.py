@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .base import JobSpec, Param, Plugin
+from .base import JobSpec, Param, Plugin, PluginError
 
 
 class LinuxRepairPlugin(Plugin):
@@ -46,12 +46,15 @@ class LinuxRepairPlugin(Plugin):
     )
 
     def build_job(self, values: dict[str, Any]) -> JobSpec:
+        action = values.get("action", "reinstall_grub")
+        if action in {"reinstall_grub", "both"} and not values.get("esp_device"):
+            raise PluginError("an EFI system partition is required to reinstall GRUB")
         return JobSpec(
             "linux_repair",
             {
                 "root_device": values["root_device"],
                 "esp_device": values.get("esp_device") or None,
-                "action": values.get("action", "reinstall_grub"),
+                "action": action,
             },
             f"Repair Linux install on {values['root_device']}",
         )

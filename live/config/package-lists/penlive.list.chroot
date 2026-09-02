@@ -86,6 +86,8 @@ nvme-cli
 hdparm
 pciutils
 usbutils
+iproute2
+iputils-ping
 less
 nano
 

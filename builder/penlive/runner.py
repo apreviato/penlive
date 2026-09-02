@@ -7,6 +7,7 @@ side effects, and real runs leave an audit trail on disk.
 from __future__ import annotations
 
 import logging
+import shutil
 import shlex
 import subprocess
 from dataclasses import dataclass, field
@@ -61,6 +62,16 @@ class CommandRunner:
             return
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
+
+    def install_file(self, source: Path, target: Path) -> None:
+        """Copy one artifact with install -D semantics, without a host CLI dependency."""
+        printable = " ".join(shlex.quote(c) for c in ["install", "-D", str(source), str(target)])
+        self._history.append(printable)
+        self._log_line(("[dry-run] " if self.dry_run else "[copy] ") + printable)
+        if self.dry_run:
+            return
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
 
     def _log_line(self, line: str) -> None:
         if not self.log_path:

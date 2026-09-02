@@ -54,10 +54,10 @@ def install_signed_chain(runner: CommandRunner, efi_mount: Path) -> None:
     is included so a user can enrol their own key later without rebuilding.
     """
     boot_dir = efi_mount / "EFI" / "BOOT"
-    runner.run(["install", "-D", str(SHIM_SIGNED), str(boot_dir / "BOOTX64.EFI")])
-    runner.run(["install", "-D", str(GRUB_SIGNED), str(boot_dir / "grubx64.efi")])
+    runner.install_file(SHIM_SIGNED, boot_dir / "BOOTX64.EFI")
+    runner.install_file(GRUB_SIGNED, boot_dir / "grubx64.efi")
     if MOKMANAGER_SIGNED.is_file():
-        runner.run(["install", "-D", str(MOKMANAGER_SIGNED), str(boot_dir / "mmx64.efi")])
+        runner.install_file(MOKMANAGER_SIGNED, boot_dir / "mmx64.efi")
 
     runner.write_file(efi_mount / SIGNED_GRUB_PREFIX / "grub.cfg", EMBEDDED_CFG)
 

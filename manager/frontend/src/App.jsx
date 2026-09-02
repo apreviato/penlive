@@ -3,15 +3,22 @@ import { api } from './api/client.js';
 import { installKioskLockdown, isDevServer } from './kiosk.js';
 
 import Dialog from './components/Dialog.jsx';
+import FileManager from './components/FileManager.jsx';
 import SettingsPanel from './components/SettingsPanel.jsx';
 import SetupWizard from './components/SetupWizard.jsx';
 import StatusBar from './components/StatusBar.jsx';
 import Systems from './components/Systems.jsx';
 import Tools from './components/Tools.jsx';
+import Terminal from './components/Terminal.jsx';
+import VmViewer from './components/VmViewer.jsx';
+import { PenLiveMark } from './components/Icons.jsx';
 
 const TABS = [
   { id: 'systems', label: 'Systems' },
+  { id: 'files', label: 'Files' },
   { id: 'tools', label: 'Tools' },
+  { id: 'terminal', label: 'Terminal' },
+  { id: 'vm', label: 'VM' },
   { id: 'settings', label: 'Settings' },
 ];
 
@@ -22,6 +29,18 @@ export default function App() {
   const [network, setNetwork] = useState(null);
   const [sysinfo, setSysinfo] = useState(null);
   const [notice, setNotice] = useState(null);
+  const [fileTarget, setFileTarget] = useState(null);
+  const [vmSession, setVmSession] = useState(null);
+
+  const openFiles = (target = { source: 'pendata' }) => {
+    setFileTarget({ ...target, nonce: Date.now() });
+    setTab('files');
+  };
+
+  const openVm = (session) => {
+    setVmSession(session);
+    setTab('vm');
+  };
 
   // Lock the page down in the kiosk, but never on the dev server — locking out
   // reload and devtools would make the UI impossible to work on.
@@ -82,10 +101,10 @@ export default function App() {
 
   if (phase === 'loading') {
     return (
-      <div className="app">
-        <div className="empty">
-          <span className="spinner" /> Starting PenLive…
-        </div>
+      <div className="loading-screen">
+        <div className="loading-mark"><PenLiveMark size={42} /></div>
+        <div className="loading-title">PenLive</div>
+        <div className="loading-copy"><span className="spinner" /> Preparing your workspace…</div>
       </div>
     );
   }
@@ -112,25 +131,19 @@ export default function App() {
       <StatusBar
         sysinfo={sysinfo}
         network={network}
+        tabs={TABS}
+        activeTab={tab}
+        onSelectTab={setTab}
         onOpenNetwork={() => setTab('settings')}
         onOpenKeyboard={() => setTab('settings')}
         onPower={powerMenu}
       />
 
-      <nav className="tabs">
-        {TABS.map((t) => (
-          <button
-            key={t.id}
-            className={`tab ${tab === t.id ? 'active' : ''}`}
-            onClick={() => setTab(t.id)}
-          >
-            {t.label}
-          </button>
-        ))}
-      </nav>
-
-      {tab === 'systems' && <Systems onNotice={setNotice} />}
+      {tab === 'systems' && <Systems network={network} onNotice={setNotice} onOpenFiles={openFiles} onOpenVm={openVm} />}
+      {tab === 'files' && <FileManager onNotice={setNotice} target={fileTarget} />}
       {tab === 'tools' && <Tools />}
+      {tab === 'terminal' && <Terminal />}
+      {tab === 'vm' && <VmViewer session={vmSession} onClosed={() => setVmSession(null)} />}
       {tab === 'settings' && (
         <SettingsPanel
           sysinfo={sysinfo}

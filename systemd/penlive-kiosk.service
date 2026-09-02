@@ -1,6 +1,11 @@
 [Unit]
 Description=PenLive kiosk UI (X + Chromium)
-After=penlive-api.service
+# X owns tty1 and the DRM device.  Wait until Plymouth has completely released
+# both before starting it; without this ordering the two race during boot and
+# X can enter the service's restart loop on slower real hardware.
+After=penlive-api.service systemd-user-sessions.service systemd-logind.service
+After=getty@tty1.service
+After=plymouth-quit.service plymouth-quit-wait.service
 Wants=penlive-api.service
 Conflicts=getty@tty1.service
 
@@ -8,14 +13,18 @@ Conflicts=getty@tty1.service
 Type=simple
 User=penlive
 Group=penlive
+Environment=HOME=/var/lib/penlive
+Environment=XAUTHORITY=/var/lib/penlive/.Xauthority
+RuntimeDirectory=penlive-kiosk
+RuntimeDirectoryMode=0700
 PAMName=login
 TTYPath=/dev/tty1
 TTYReset=yes
 TTYVHangup=yes
 StandardInput=tty
 StandardOutput=journal
-# kiosk.sh polls /api/health before launching Chromium, so a slow API start
-# shows nothing rather than a browser error page.
+# Chromium starts on a local PenLive loading page and moves to the manager when
+# /api/health is ready, so a slow API never exposes a browser error page.
 ExecStart=/opt/penlive/kiosk.sh
 Restart=always
 RestartSec=3

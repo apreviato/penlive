@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .base import JobSpec, Param, Plugin
+from .base import JobSpec, Param, Plugin, PluginError
 
 
 class WindowsRepairPlugin(Plugin):
@@ -47,6 +47,8 @@ class WindowsRepairPlugin(Plugin):
 
     def build_job(self, values: dict[str, Any]) -> JobSpec:
         action = values.get("action", "fix_filesystem")
+        if action == "restore_efi_boot" and not values.get("esp_device"):
+            raise PluginError("an EFI system partition is required to restore Windows boot files")
         args = {"windows_device": values["windows_device"], "action": action}
         if action == "restore_efi_boot":
             args["esp_device"] = values.get("esp_device")

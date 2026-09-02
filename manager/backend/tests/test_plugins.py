@@ -6,10 +6,11 @@ from app.daemon import operations, procedures
 KNOWN_KINDS = set(operations.OPERATIONS) | set(procedures.PROCEDURES)
 
 
-def test_registry_has_the_eight_documented_tools():
+def test_registry_has_the_ten_documented_tools():
     assert {p.id for p in plugins.REGISTRY} == {
         "backup", "restore", "smart", "disk-repair",
         "linux-repair", "windows-repair", "file-recovery", "provisioning",
+        "hardware-report", "network-diagnostics",
     }
 
 
@@ -44,6 +45,8 @@ def test_manifests_serialize():
         ("file-recovery", {"device": "/dev/sda1", "name": "r1", "filetype": "everything"}),
         ("linux-repair", {"root_device": "/dev/sda2", "esp_device": "/dev/sda1", "action": "both"}),
         ("windows-repair", {"windows_device": "/dev/sda3", "action": "fix_filesystem"}),
+        ("hardware-report", {}),
+        ("network-diagnostics", {}),
     ],
 )
 def test_build_job_targets_a_real_daemon_operation(plugin_id, values):
@@ -86,3 +89,15 @@ def test_unknown_plugin_id_raises():
     from app.plugins.base import PluginError
     with pytest.raises(PluginError, match="unknown tool"):
         plugins.get("does-not-exist")
+
+
+def test_boot_repairs_require_an_efi_partition():
+    from app.plugins.base import PluginError
+    with pytest.raises(PluginError, match="EFI system partition"):
+        plugins.get("linux-repair").build_job(
+            {"root_device": "/dev/sda2", "action": "reinstall_grub"}
+        )
+    with pytest.raises(PluginError, match="EFI system partition"):
+        plugins.get("windows-repair").build_job(
+            {"windows_device": "/dev/sda3", "action": "restore_efi_boot"}
+        )

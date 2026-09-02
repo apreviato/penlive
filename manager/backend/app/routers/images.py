@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import shutil
 from pathlib import Path
 
@@ -7,6 +8,7 @@ from fastapi import APIRouter, HTTPException
 
 from .. import paths, repo, schemas
 from ..services import catalog as catalog_service
+from ..services import local_images
 
 router = APIRouter(prefix="/api", tags=["images"])
 
@@ -30,6 +32,12 @@ async def refresh_catalog():
     return {"count": len(data.get("systems", []))}
 
 
+@router.post("/images/rescan")
+async def rescan_images():
+    """Import and inspect .iso files copied directly into PENDATA/images."""
+    return await asyncio.to_thread(local_images.reconcile)
+
+
 @router.delete("/images/{image_id}")
 def delete_image(image_id: str):
     image = repo.get_image(image_id)
@@ -42,7 +50,13 @@ def delete_image(image_id: str):
     if extract_dir.exists():
         shutil.rmtree(extract_dir, ignore_errors=True)
 
-    repo.set_image_status(image_id, "not_downloaded", path=None, size_bytes=None, adapter=None)
+    if image.get("origin") == "local":
+        repo.delete_image(image_id)
+    else:
+        repo.set_image_status(
+            image_id, "not_downloaded", path=None, size_bytes=None, adapter=None,
+            verified=False, inspection_error=None,
+        )
     return {"deleted": image_id}
 
 
@@ -52,5 +66,8 @@ def storage():
     usage = shutil.disk_usage(probe_dir)
     images_bytes = 0
     if paths.IMAGES_DIR.exists():
-        images_bytes = sum(f.stat().st_size for f in paths.IMAGES_DIR.glob("*.iso") if f.is_file())
+        images_bytes = sum(
+            file.stat().st_size for file in paths.IMAGES_DIR.iterdir()
+            if file.is_file() and file.suffix.lower() == ".iso"
+        )
     return schemas.StorageOut(data_total_bytes=usage.total, data_free_bytes=usage.free, images_bytes=images_bytes)

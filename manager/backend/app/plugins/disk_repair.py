@@ -22,7 +22,13 @@ class DiskRepairPlugin(Plugin):
     category = "repair"
     danger = "caution"
     icon = "⚕"
-    required_tools = ("fsck",)
+    required_tools = ()
+    option_requirements = {
+        "fstype": {
+            "ext": ("e2fsck",), "ntfs": ("ntfsfix",),
+            "vfat": ("fsck.vfat",), "exfat": ("fsck.exfat",),
+        }
+    }
 
     params = (
         Param(

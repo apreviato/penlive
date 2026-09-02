@@ -59,6 +59,20 @@ def test_image_plan_covers_the_whole_build(tmp_path, fake_live):
         assert expected in combined, f"{expected!r} missing from the image plan"
 
 
+def test_image_plan_clears_an_existing_image_before_resizing(tmp_path, fake_live):
+    """A smaller rebuild must not retain a primary GPT from the old image."""
+    proc = run_cli(*image_args(tmp_path, fake_live, 20480))
+    assert proc.returncode == 0, f"stdout:\n{proc.stdout}\nstderr:\n{proc.stderr}"
+
+    truncate_lines = [
+        line for line in (proc.stdout + proc.stderr).splitlines()
+        if line.startswith("DRY-RUN") and "truncate" in line
+    ]
+    assert len(truncate_lines) == 2
+    assert " -s 0 " in truncate_lines[0]
+    assert " -s 20480M " in truncate_lines[1]
+
+
 def test_too_small_image_fails_cleanly_with_a_hint(tmp_path, fake_live):
     """16384 looks like a natural default but leaves only 3584 MiB for data,
     below the 4096 minimum. The operator needs the number, not a traceback."""

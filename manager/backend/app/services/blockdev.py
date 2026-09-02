@@ -40,7 +40,7 @@ async def inventory() -> dict[str, list[dict[str, Any]]]:
     disks: list[dict[str, Any]] = []
     partitions: list[dict[str, Any]] = []
 
-    def walk(node: dict[str, Any], parent_is_penlive: bool = False) -> bool:
+    def walk(node: dict[str, Any], parent_is_penlive: bool = False, parent_path: str | None = None) -> bool:
         label = node.get("label") or ""
         is_penlive = parent_is_penlive or label in PENLIVE_LABELS
         entry = {
@@ -55,6 +55,7 @@ async def inventory() -> dict[str, list[dict[str, Any]]]:
             "removable": bool(node.get("rm")),
             "readonly": bool(node.get("ro")),
             "type": node.get("type"),
+            "parent": parent_path,
         }
 
         # Evaluate every child before combining: `any(walk(c) ...)` would
@@ -62,7 +63,7 @@ async def inventory() -> dict[str, list[dict[str, Any]]]:
         # siblings after it, which on a real stick means PENSYS, persistence
         # and PENDATA all disappear from the device list.
         children = node.get("children") or []
-        child_flags = [walk(c, is_penlive) for c in children]
+        child_flags = [walk(c, is_penlive, node.get("path")) for c in children]
         is_penlive = is_penlive or any(child_flags)
         entry["penlive"] = is_penlive
 

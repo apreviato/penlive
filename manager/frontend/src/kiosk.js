@@ -22,6 +22,8 @@ const BLOCKED_COMBOS = [
   { ctrl: true, key: 'j' },        // downloads
   { ctrl: true, key: 'h' },        // history
   { ctrl: true, key: 'u' },        // view source
+  { ctrl: true, key: 'f' },        // find overlay
+  { ctrl: true, key: 'l' },        // focus address bar
   { ctrl: true, shift: true, key: 'i' }, // devtools
   { ctrl: true, shift: true, key: 'j' },
   { ctrl: true, shift: true, key: 'c' },

@@ -19,6 +19,7 @@ UEFI
                  └─ LABEL=persistence partition       (OverlayFS, writable)
                      └─ systemd
                          ├─ NetworkManager
+                         ├─ penlive-storage  (root, one-shot permissions)
                          ├─ penlive-daemon   (root, Unix socket)
                          ├─ penlive-aria2    (penlive user)
                          ├─ penlive-api      (penlive user, :7777)
@@ -187,6 +188,12 @@ operation plus structured arguments, and the daemon builds the argv itself in
 `daemon/operations.py`. Adding a plugin does not widen what the system can do.
 Details and the threat model are in [PLUGINS.md](PLUGINS.md).
 
+The Terminal tab is intentionally different: it is a real interactive shell,
+but it is spawned by the already unprivileged API as `penlive`, never by the
+root daemon. It can work with PENDATA and user-writable mounted drives, while
+the API service sandbox and ordinary Unix permissions still protect the live
+system and privileged device operations.
+
 ## Kiosk: why the lockdown has three layers
 
 Locking the browser is not enough — a user leaves the application through paths
@@ -200,11 +207,18 @@ the browser never sees:
 | Alt+F4, Alt+Tab, right-click menu | `openbox-rc.xml` with empty `<keyboard>` and `<mouse>` |
 | Ctrl+R, F12, Ctrl+O, dropping a file | `src/kiosk.js` inside the app |
 | Closing Chromium somehow | a `while true` loop in `xsession.sh` reopens it |
+| Password-save/autofill prompts | managed Chromium policy + incognito profile |
 
 The browser layer is the last one, not the only one: Chromium never receives
 Alt+F4, because the window manager consumes it first. And `kiosk.js` disables
 itself on the dev server — locking out reload and devtools would make the UI
 impossible to work on.
+
+Chromium runs with sign-in, sync, password storage, address/card autofill,
+translation prompts and the default-browser prompts disabled by managed
+policy. Wi-Fi credentials belong to NetworkManager, not to the browser
+profile; this also prevents the kiosk from leaving secrets in Chromium's
+persistent state.
 
 ## First run
 
@@ -268,6 +282,17 @@ download has to survive an API restart; at startup,
 `downloader.resume_watchers()` reattaches to the GIDs still running. The
 partial file and its `.aria2` control file live on `PENDATA`, which is
 persisted — so resuming after powering the machine off genuinely works.
+aria2 also saves its session on `PENDATA` every 30 seconds. Transient network
+failures retry indefinitely with a delay; they do not discard the partial ISO
+or silently turn the UI back into a fresh Download button. If a permanent
+source error occurs, the WebSocket sends aria2's error text to the visible UI.
+
+RPC disappearing while systemd restarts aria2 no longer marks the transfer as
+failed: the watcher waits and reconnects. On a new Download request, PenLive
+attaches to an existing aria2 transfer for the same path. A complete orphan is
+verified and adopted; an incomplete file with no `.aria2` control file is
+removed because aria2 cannot reliably resume it, preventing a permanent
+"file already exists" loop.
 
 The ordering that makes "it exists in `images/`" mean "it is trustworthy":
 
@@ -278,6 +303,39 @@ aria2 → images/.downloads/x.iso.part → SHA-256 → atomic rename → images/
 Verification failed → file deleted, status `corrupted`. The `rename()` only
 happens after the hash matches, so nothing half-downloaded or tampered with
 ever appears ready to boot.
+
+## Files and locally copied ISOs
+
+The Files tab exposes PENDATA, read-only mounted ISOs and filesystem partitions
+reported by `lsblk`. Unmounted partitions are mounted by one fixed daemon
+operation under `/run/penlive/drives`; removable mounts can be safely removed
+again. Every requested path is resolved below its validated source root, so
+traversal and absolute paths are rejected. Copy and Move work across sources,
+while the catalog, logs, download staging area and top-level images directory
+cannot be renamed or deleted.
+
+ISOs copied manually into `/data/images` are scanned at API startup and on
+demand. A filename matching a catalog entry is checked against that entry's
+SHA-256 before it becomes verified. Other ISOs receive a stable local ID and
+are inspected by the adapter registry, but remain visibly unverified and need
+an extra confirmation before native boot. Missing local files are removed from
+the database, so the catalog never retains a stale Boot button.
+
+## Embedded virtual machines
+
+QEMU runs as `penlive` and exposes VNC plus its WebSocket transport only on
+loopback. noVNC is bundled into the frontend, so **Run VM** changes to the VM
+tab instead of opening a GTK window behind fullscreen Chromium. The kiosk can
+therefore display and control the guest without Alt+Tab or another desktop.
+
+## Runtime storage ownership
+
+PENSYS does not exist while the squashfs is built, so its `boot/state` and
+`boot/extracted` directories originally arrived owned by root. The
+`penlive-storage` one-shot runs after fstab/first-boot expansion and before the
+daemon, aria2 and API, creating those runtime directories and granting the
+unprivileged manager only the write access it needs. This allows adapter
+extraction and native Boot without running ISO parsing as root.
 
 ## Catalog
 

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import itertools
 import re
+import shutil
 import subprocess
 import threading
 import time
@@ -19,7 +20,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .operations import OperationError, build_argv
-from .procedures import PROCEDURES
+from .procedures import PROCEDURES, PROCEDURE_REQUIREMENTS, set_process_callback
 
 LOG_LIMIT = 2000
 _ids = itertools.count(1)
@@ -94,6 +95,9 @@ def start_job(kind: str, args: dict, title: str) -> Job:
     a moment later.
     """
     if kind in PROCEDURES:
+        missing = [tool for tool in PROCEDURE_REQUIREMENTS.get(kind, ()) if not shutil.which(tool)]
+        if missing:
+            raise OperationError(f"procedure {kind!r} needs missing tool(s): {', '.join(missing)}")
         destructive = kind in ("windows_repair", "provision_apply")
         job = Job(id=next(_ids), kind=kind, title=title, destructive=destructive)
         runner = _run_procedure
@@ -133,6 +137,7 @@ def _run_argv(job: Job, argv: list[str]) -> None:
 
 
 def _run_procedure(job: Job, args: dict) -> None:
+    set_process_callback(lambda proc: setattr(job, "_process", proc))
     try:
         for line in PROCEDURES[job.kind](args):
             if job._cancel.is_set():
@@ -143,9 +148,20 @@ def _run_procedure(job: Job, args: dict) -> None:
         _set_state(job, "success")
         job.exit_code = 0
     except OperationError as exc:
-        _fail(job, str(exc))
+        if job._cancel.is_set():
+            job.append("Cancelled by user.")
+            _set_state(job, "cancelled")
+        else:
+            _fail(job, str(exc))
     except Exception as exc:  # noqa: BLE001
-        _fail(job, f"{type(exc).__name__}: {exc}")
+        if job._cancel.is_set():
+            job.append("Cancelled by user.")
+            _set_state(job, "cancelled")
+        else:
+            _fail(job, f"{type(exc).__name__}: {exc}")
+    finally:
+        set_process_callback(None)
+        job._process = None
 
 
 def _finish_from_exit_code(job: Job, code: int) -> None:

@@ -11,6 +11,8 @@ from .base import JobSpec, Param, Plugin, PluginError
 from .disk_repair import DiskRepairPlugin
 from .file_recovery import FileRecoveryPlugin
 from .linux_repair import LinuxRepairPlugin
+from .hardware_report import HardwareReportPlugin
+from .network_diagnostics import NetworkDiagnosticsPlugin
 from .provisioning import ProvisioningPlugin
 from .restore import RestorePlugin
 from .smart import SmartPlugin
@@ -20,6 +22,8 @@ REGISTRY: list[Plugin] = [
     BackupPlugin(),
     RestorePlugin(),
     SmartPlugin(),
+    HardwareReportPlugin(),
+    NetworkDiagnosticsPlugin(),
     DiskRepairPlugin(),
     LinuxRepairPlugin(),
     WindowsRepairPlugin(),

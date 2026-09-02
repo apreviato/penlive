@@ -1,6 +1,6 @@
 [Unit]
 Description=PenLive Manager API (FastAPI)
-After=network.target penlive-daemon.service penlive-aria2.service local-fs.target
+After=network.target penlive-storage.service penlive-daemon.service penlive-aria2.service local-fs.target
 Wants=penlive-aria2.service
 
 [Service]

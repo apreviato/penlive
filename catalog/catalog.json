@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "updated_at": "2026-09-01",
-  "_comment": "Checksums and sizes were fetched from each vendor's own published checksum file on 2026-09-01 (see tools/update_catalog.py, which regenerates this file). Vendors move ISOs when they release point updates, so re-run that tool rather than hand-editing.",
+  "updated_at": "2026-09-02",
+  "_comment": "Checksums and sizes were fetched from each vendor's own published checksum file on 2026-09-02 (see tools/update_catalog.py, which regenerates this file). Vendors move ISOs when they release point updates, so re-run that tool rather than hand-editing.",
   "systems": [
     {
       "id": "debian-13-live-standard",
@@ -227,6 +227,96 @@
         "vm": true,
         "mount": true
       }
+    },
+    {
+      "id": "debian-13-live-xfce",
+      "name": "Debian 13 Live (Xfce)",
+      "family": "debian",
+      "version": "13.6.0",
+      "architecture": "amd64",
+      "adapter": "debian",
+      "sources": [{
+        "url": "https://cdimage.debian.org/debian-cd/current-live/amd64/iso-hybrid/debian-live-13.6.0-amd64-xfce.iso"
+      }],
+      "sha256": "55970efe1bfe6455ce9d662a034d123cbfc16f9ac7a4a9db89f8e61b09de3faf",
+      "size": 3825205248,
+      "checksum_source": "https://cdimage.debian.org/debian-cd/current-live/amd64/iso-hybrid/SHA256SUMS",
+      "capabilities": {"nativeBoot": true, "kexec": true, "vm": true, "mount": true}
+    },
+    {
+      "id": "debian-13-live-kde",
+      "name": "Debian 13 Live (KDE Plasma)",
+      "family": "debian",
+      "version": "13.6.0",
+      "architecture": "amd64",
+      "adapter": "debian",
+      "sources": [{
+        "url": "https://cdimage.debian.org/debian-cd/current-live/amd64/iso-hybrid/debian-live-13.6.0-amd64-kde.iso"
+      }],
+      "sha256": "426984f7edf034f4cd49f6218e706a6086588359d34fa0328676451b4a679639",
+      "size": 4186112000,
+      "checksum_source": "https://cdimage.debian.org/debian-cd/current-live/amd64/iso-hybrid/SHA256SUMS",
+      "capabilities": {"nativeBoot": true, "kexec": true, "vm": true, "mount": true}
+    },
+    {
+      "id": "kubuntu-26-04-desktop",
+      "name": "Kubuntu 26.04.1 LTS",
+      "family": "ubuntu",
+      "version": "26.04.1",
+      "architecture": "amd64",
+      "adapter": "ubuntu",
+      "sources": [{
+        "url": "https://cdimage.ubuntu.com/kubuntu/releases/26.04/release/kubuntu-26.04.1-desktop-amd64.iso"
+      }],
+      "sha256": "831e4d4bb85098339ba43d3502cd6619b27e76daf37246a084cd68a6413090b8",
+      "size": 5072990208,
+      "checksum_source": "https://cdimage.ubuntu.com/kubuntu/releases/26.04/release/SHA256SUMS",
+      "capabilities": {"nativeBoot": true, "kexec": true, "vm": true, "mount": true}
+    },
+    {
+      "id": "lubuntu-26-04-desktop",
+      "name": "Lubuntu 26.04.1 LTS",
+      "family": "ubuntu",
+      "version": "26.04.1",
+      "architecture": "amd64",
+      "adapter": "ubuntu",
+      "sources": [{
+        "url": "https://cdimage.ubuntu.com/lubuntu/releases/26.04/release/lubuntu-26.04.1-desktop-amd64.iso"
+      }],
+      "sha256": "a8038585420f2270845549c6f493e0ec98e68d4b2c49571cbe500a4b5fab3062",
+      "size": 3927552000,
+      "checksum_source": "https://cdimage.ubuntu.com/lubuntu/releases/26.04/release/SHA256SUMS",
+      "capabilities": {"nativeBoot": true, "kexec": true, "vm": true, "mount": true}
+    },
+    {
+      "id": "xubuntu-26-04-desktop",
+      "name": "Xubuntu 26.04.1 LTS",
+      "family": "ubuntu",
+      "version": "26.04.1",
+      "architecture": "amd64",
+      "adapter": "ubuntu",
+      "sources": [{
+        "url": "https://cdimage.ubuntu.com/xubuntu/releases/26.04/release/xubuntu-26.04.1-desktop-amd64.iso"
+      }],
+      "sha256": "0cd5160f72ae6b7a26be7a29248b60cbd579b9e6aa8fbd274e95264da0ade43d",
+      "size": 5186390016,
+      "checksum_source": "https://cdimage.ubuntu.com/xubuntu/releases/26.04/release/SHA256SUMS",
+      "capabilities": {"nativeBoot": true, "kexec": true, "vm": true, "mount": true}
+    },
+    {
+      "id": "ubuntu-studio-26-04",
+      "name": "Ubuntu Studio 26.04.1 LTS",
+      "family": "ubuntu",
+      "version": "26.04.1",
+      "architecture": "amd64",
+      "adapter": "ubuntu",
+      "sources": [{
+        "url": "https://cdimage.ubuntu.com/ubuntustudio/releases/26.04/release/ubuntustudio-26.04.1-desktop-amd64.iso"
+      }],
+      "sha256": "2b25d06203c8a2f60da23e20e3afd1fa400f8ff8104fd074c1b7e49fc3768084",
+      "size": 7127195648,
+      "checksum_source": "https://cdimage.ubuntu.com/ubuntustudio/releases/26.04/release/SHA256SUMS",
+      "capabilities": {"nativeBoot": true, "kexec": true, "vm": true, "mount": true}
     }
   ]
 }

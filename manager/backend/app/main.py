@@ -15,9 +15,9 @@ from fastapi.staticfiles import StaticFiles
 
 from . import paths
 from .routers import (
-    boot, downloads, images, jobs, mount, network, system, system_info, tools, vm,
+    boot, downloads, files, images, jobs, mount, network, system, system_info, terminal, tools, vm,
 )
-from .services import catalog, downloader, keyboard
+from .services import catalog, downloader, keyboard, local_images
 
 log = logging.getLogger("penlive.api")
 
@@ -32,18 +32,23 @@ async def lifespan(app: FastAPI):
     # live-boot restores /etc from persistence, but the X session starts fresh,
     # so the saved layout has to be re-applied on every boot.
     await keyboard.apply_saved_layout()
-    asyncio.create_task(_seed_catalog_on_startup())
+    asyncio.create_task(_seed_catalog_and_scan_images())
     yield
 
 
-async def _seed_catalog_on_startup() -> None:
+async def _seed_catalog_and_scan_images() -> None:
     if paths.OFFLINE:
         log.info("PENLIVE_OFFLINE set; skipping catalog refresh")
         return
+    else:
+        try:
+            await catalog.refresh()
+        except Exception:
+            log.warning("initial catalog refresh failed; serving cached/bundled catalog only", exc_info=True)
     try:
-        await catalog.refresh()
+        await asyncio.to_thread(local_images.reconcile)
     except Exception:
-        log.warning("initial catalog refresh failed; serving cached/bundled catalog only", exc_info=True)
+        log.warning("local ISO scan failed; the manager remains available", exc_info=True)
 
 
 app = FastAPI(title="PenLive Manager", lifespan=lifespan)
@@ -56,8 +61,8 @@ app.add_middleware(
 )
 
 for _router in (
-    network.router, images.router, downloads.router, boot.router, vm.router,
-    mount.router, system.router, system_info.router, tools.router, jobs.router,
+    network.router, images.router, files.router, downloads.router, boot.router, vm.router,
+    mount.router, system.router, system_info.router, terminal.router, tools.router, jobs.router,
 ):
     app.include_router(_router)
 

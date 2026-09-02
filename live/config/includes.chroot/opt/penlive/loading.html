@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#050607" />
+    <title>Starting PenLive</title>
+    <style>
+      * { box-sizing: border-box; }
+      html, body { width: 100%; height: 100%; margin: 0; background: #050607; }
+      body {
+        display: grid;
+        place-items: center;
+        color: #f2f6fb;
+        font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+      main { display: flex; flex-direction: column; align-items: center; }
+      .mark {
+        display: grid;
+        place-items: center;
+        width: 76px;
+        height: 76px;
+        color: #4f9cff;
+        border: 1px solid rgba(79, 156, 255, .32);
+        border-radius: 22px;
+        background: rgba(79, 156, 255, .14);
+      }
+      h1 { margin: 18px 0 7px; font-size: 24px; letter-spacing: -.3px; }
+      p { display: flex; align-items: center; gap: 9px; margin: 0; color: #a7b3c7; font-size: 13px; }
+      .spinner {
+        width: 14px;
+        height: 14px;
+        border: 2px solid #292e35;
+        border-top-color: #4f9cff;
+        border-radius: 50%;
+        animation: spin .7s linear infinite;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="mark" aria-hidden="true">
+        <svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
+          <path d="M9 3h6v3l2.5 2.5V19a2 2 0 0 1-2 2h-7a2 2 0 0 1-2-2V8.5L9 6V3Z" />
+          <path d="M9 6h6M9.5 12h5M9.5 16h5" />
+        </svg>
+      </div>
+      <h1>PenLive</h1>
+      <p><span class="spinner"></span> Starting the manager…</p>
+    </main>
+    <script>
+      const managerUrl = 'http://127.0.0.1:7777/';
+      async function openWhenReady() {
+        try {
+          await fetch(`${managerUrl}api/health`, { mode: 'no-cors', cache: 'no-store' });
+          window.location.replace(managerUrl);
+          return;
+        } catch (_) {
+          window.setTimeout(openWhenReady, 500);
+        }
+      }
+      openWhenReady();
+    </script>
+  </body>
+</html>

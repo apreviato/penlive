@@ -9,9 +9,13 @@ const STATUS_LABEL = {
   downloaded: 'downloaded',
   ready: 'ready',
   corrupted: 'corrupted',
+  inspecting: 'inspecting',
+  invalid: 'invalid',
 };
 
-export default function ImageCard({ image, onChanged, onError, onNotice }) {
+export default function ImageCard({
+  image, online = false, onChanged, onError, onNotice, onOpenFiles, onOpenVm,
+}) {
   const [progress, setProgress] = useState(null);
   const [busy, setBusy] = useState(null);
   const socketRef = useRef(null);
@@ -29,14 +33,19 @@ export default function ImageCard({ image, onChanged, onError, onNotice }) {
 
     const ws = downloadProgressSocket(image.id, (msg) => {
       setProgress(msg);
-      if (msg.state === 'complete' || msg.state === 'error') onChanged();
+      if (msg.state === 'error') {
+        onError(`${image.name}: ${msg.error || 'The download stopped unexpectedly. Try again.'}`);
+        onChanged();
+      } else if (msg.state === 'complete') {
+        onChanged();
+      }
     });
     socketRef.current = ws;
     return () => {
       ws.close();
       socketRef.current = null;
     };
-  }, [isDownloading, image.id, onChanged]);
+  }, [isDownloading, image.id, image.name, onChanged, onError]);
 
   const run = async (label, fn) => {
     setBusy(label);
@@ -50,9 +59,9 @@ export default function ImageCard({ image, onChanged, onError, onNotice }) {
     }
   };
 
-  const bootNow = () =>
+  const scheduleBoot = (allowUnverified = false) =>
     run('boot', async () => {
-      await api.scheduleBoot(image.id);
+      await api.scheduleBoot(image.id, allowUnverified);
       onNotice({
         kind: 'boot',
         title: 'Scheduled for next boot',
@@ -60,24 +69,31 @@ export default function ImageCard({ image, onChanged, onError, onNotice }) {
       });
     });
 
+  const bootNow = () => {
+    if (!image.verified) {
+      onNotice({
+        kind: 'confirm',
+        title: 'Boot an unverified ISO?',
+        message: `${image.name} was added locally or has no published checksum. Boot it only if you trust where it came from.`,
+        confirmLabel: 'Boot anyway',
+        danger: true,
+        onConfirm: () => scheduleBoot(true),
+      });
+      return;
+    }
+    scheduleBoot(false);
+  };
+
   const mount = () =>
     run('mount', async () => {
       const result = await api.mountImage(image.id);
-      onNotice({
-        kind: 'info',
-        title: 'Image mounted',
-        message: `Contents available at ${result.mountpoint}`,
-      });
+      onOpenFiles?.({ source: `iso:${image.id}`, label: image.name });
     });
 
   const runVm = () =>
     run('vm', async () => {
-      await api.startVm(image.id);
-      onNotice({
-        kind: 'info',
-        title: 'Virtual machine started',
-        message: `${image.name} is running in a window. Close that window to stop it.`,
-      });
+      const result = await api.startVm(image.id);
+      onOpenVm?.({ image, ...result });
     });
 
   const remove = () =>
@@ -108,6 +124,8 @@ export default function ImageCard({ image, onChanged, onError, onNotice }) {
           <span className={`badge badge-${image.status}`}>
             {STATUS_LABEL[image.status] ?? image.status}
           </span>
+          {image.origin === 'local' && <span className="tag">local ISO</span>}
+          {!image.verified && downloaded && <span className="tag tag-caution">unverified</span>}
           <span>{formatBytes(image.size_bytes)}</span>
           {image.version && <span>v{image.version}</span>}
           {image.adapter && <span>adapter: {image.adapter}</span>}
@@ -142,16 +160,39 @@ export default function ImageCard({ image, onChanged, onError, onNotice }) {
             SHA-256 check failed — the file was discarded. Try downloading again.
           </div>
         )}
+
+        {image.status === 'invalid' && (
+          <div className="progress-meta danger-text">
+            Could not inspect this ISO — {image.inspection_error || 'the file may be incomplete or invalid'}.
+          </div>
+        )}
       </div>
 
       <div className="image-actions">
-        {!downloaded && !isDownloading && (
+        {!downloaded && !isDownloading && image.origin !== 'local' && (
           <button
-            className="btn btn-primary"
-            onClick={() => run('download', () => api.startDownload(image.id))}
+            className={`btn ${online ? 'btn-primary' : ''}`}
+            onClick={() => {
+              if (!online) {
+                onNotice({
+                  kind: 'info',
+                  title: 'No internet connection',
+                  message: 'Connect to Wi-Fi or Ethernet in Settings, then try the download again.',
+                });
+                return;
+              }
+              run('download', () => api.startDownload(image.id));
+            }}
             disabled={busy === 'download'}
+            title={online ? `Download ${image.name}` : 'Connect to the internet before downloading'}
           >
-            {busy === 'download' ? <span className="spinner" /> : 'Download'}
+            {busy === 'download' ? <span className="spinner" /> : online ? 'Download' : 'Connect to download'}
+          </button>
+        )}
+
+        {!downloaded && !isDownloading && image.origin === 'local' && (
+          <button className="btn btn-danger" onClick={remove} disabled={busy === 'delete'}>
+            Delete
           </button>
         )}
 

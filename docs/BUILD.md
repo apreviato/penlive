@@ -213,10 +213,17 @@ Minimum validation script:
 4. Download an ISO; kill the VM at roughly 50% and restart — the download
    should resume.
 5. SHA-256 verification passes and the status becomes `ready`.
-6. "Boot" schedules the pending boot; restarting should land in the installer.
-7. Restart 3 more times with a broken pending boot — the watchdog should give
+6. Copy another `.iso` into `PENDATA/images`, click **Files → Scan ISOs**, and
+   confirm it appears. A catalog match is verified; an unknown ISO is labelled
+   unverified and asks for confirmation before boot.
+7. "Boot" schedules the pending boot; restarting should land in the installer.
+8. Restart 3 more times with a broken pending boot — the watchdog should give
    up and return to the manager.
-8. Persistence: restart and confirm Wi-Fi reconnects by itself.
+9. Persistence: restart and confirm Wi-Fi reconnects by itself.
+10. Mount the ISO and confirm Files opens its contents; connect a disposable
+    USB drive and test Mount, Copy, Move and Unmount.
+11. Choose Run VM and confirm its display appears inside the VM tab, not behind
+    Chromium. Open Terminal and run `id` — it must report the `penlive` user.
 
 ## Catalog maintenance
 
@@ -352,9 +359,30 @@ needs a writable file).
 **GRUB opens but cannot find the kernel** — the `PENSYS` label did not match.
 `sudo blkid /dev/sdb2` should show `LABEL="PENSYS"`.
 
-**Comes up in text mode, no Chromium** — check `journalctl -u penlive-kiosk`
-and `journalctl -u penlive-api`. Almost always a missing
-`manager/frontend/dist` at build time.
+**Comes up in text mode, no Chromium** — choose **Recovery Manager** in GRUB,
+then check `journalctl -u penlive-kiosk` and `journalctl -u penlive-api`.
+Repeated X starts every few seconds indicate a graphics/VT failure; the kiosk
+must start only after `plymouth-quit.service` and
+`plymouth-quit-wait.service` have released the display. A browser that starts
+but shows no application usually means `manager/frontend/dist` was missing at
+build time.
+
+**A download returns to Download or reports that aria2 is unreachable** —
+check `systemctl status penlive-aria2` and
+`journalctl -u penlive-aria2 --since boot`. The service must start after
+`penlive-expand.service`, with `/data` mounted, and is configured to restart
+automatically. Wi-Fi interruptions are retried while the partial ISO remains
+under `/data/images/.downloads`.
+
+If an old failed attempt left `fedora-44-workstation.iso` without its matching
+`.aria2` file, the current manager verifies and adopts it when complete, or
+removes the unresumable partial file before starting again. It should no longer
+remain stuck on "file already exists".
+
+**Wi-Fi says `wireless-security.key-mgmt property is missing`** — this is an
+incomplete NetworkManager connection profile, usually left by an interrupted
+first connection. The manager deletes only the selected broken profile and
+recreates it using the access point's advertised security.
 
 **A downloaded system does not boot** — almost always the adapter `cmdline`.
 Use the "Ignore pending boot" entry in the Recovery menu, and compare the

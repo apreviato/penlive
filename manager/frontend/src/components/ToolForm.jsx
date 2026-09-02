@@ -18,7 +18,11 @@ function describeDevice(d) {
 }
 
 function DeviceSelect({ param, value, onChange, devices, loading }) {
-  const list = param.type === 'device' ? devices.disks : devices.partitions;
+  const list = param.type === 'device'
+    ? devices.disks
+    : param.type === 'block_device'
+      ? [...devices.disks, ...devices.partitions]
+      : devices.partitions;
   const filtered = useMemo(() => {
     if (!param.fstypes?.length) return list;
     return list.filter((d) => param.fstypes.includes(d.fstype));
@@ -165,7 +169,7 @@ export default function ToolForm({ tool, onClose, onStarted }) {
                 {!param.required && <span className="optional"> (optional)</span>}
               </label>
 
-              {(param.type === 'device' || param.type === 'partition') && (
+              {(param.type === 'device' || param.type === 'partition' || param.type === 'block_device') && (
                 <DeviceSelect
                   param={param}
                   value={values[param.name]}

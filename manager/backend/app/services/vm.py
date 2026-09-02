@@ -9,12 +9,21 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import socket
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
 
 log = logging.getLogger("penlive.vm")
 
-_running: dict[str, asyncio.subprocess.Process] = {}
+@dataclass
+class RunningVm:
+    process: asyncio.subprocess.Process
+    websocket_port: int
+    vnc_display: int
+
+
+_running: dict[str, RunningVm] = {}
 
 
 class VmError(RuntimeError):
@@ -25,14 +34,25 @@ def kvm_available() -> bool:
     return Path("/dev/kvm").exists()
 
 
-async def start(image_id: str, iso_path: str, *, memory_mib: int, cpus: int, enable_kvm: bool) -> int:
-    if image_id in _running and _running[image_id].returncode is None:
+def _available_session() -> tuple[int, int]:
+    for display in range(1, 50):
+        websocket_port = 5700 + display
+        vnc_port = 5900 + display
+        with socket.socket() as ws_sock, socket.socket() as vnc_sock:
+            if ws_sock.connect_ex(("127.0.0.1", websocket_port)) != 0 and vnc_sock.connect_ex(("127.0.0.1", vnc_port)) != 0:
+                return display, websocket_port
+    raise VmError("no free local display is available for the virtual machine")
+
+
+async def start(image_id: str, iso_path: str, *, memory_mib: int, cpus: int, enable_kvm: bool) -> dict:
+    if image_id in _running and _running[image_id].process.returncode is None:
         raise VmError(f"a VM for {image_id} is already running")
 
     qemu_bin = shutil.which("qemu-system-x86_64")
     if not qemu_bin:
         raise VmError("qemu-system-x86_64 not found on PATH")
 
+    display, websocket_port = _available_session()
     args = [
         qemu_bin,
         "-name", f"penlive-{image_id}",
@@ -43,21 +63,30 @@ async def start(image_id: str, iso_path: str, *, memory_mib: int, cpus: int, ena
         "-netdev", "user,id=net0",
         "-device", "virtio-net-pci,netdev=net0",
         "-vga", "virtio",
-        "-display", "gtk",
+        "-display", "none",
+        "-vnc", f"127.0.0.1:{display},websocket={websocket_port}",
+        "-device", "qemu-xhci",
+        "-device", "usb-tablet",
     ]
     if enable_kvm and kvm_available():
         args += ["-enable-kvm", "-cpu", "host"]
 
     proc = await asyncio.create_subprocess_exec(*args)
-    _running[image_id] = proc
+    _running[image_id] = RunningVm(proc, websocket_port, display)
     log.info("started VM for %s (pid=%s)", image_id, proc.pid)
-    return proc.pid
+    await asyncio.sleep(0.35)
+    if proc.returncode is not None:
+        _running.pop(image_id, None)
+        raise VmError(f"QEMU exited before its display became available (exit {proc.returncode})")
+    return {"pid": proc.pid, "websocket_port": websocket_port, "vnc_display": display}
 
 
 async def stop(image_id: str) -> None:
-    proc = _running.get(image_id)
-    if not proc or proc.returncode is not None:
-        raise VmError(f"no running VM for {image_id}")
+    running = _running.get(image_id)
+    if not running or running.process.returncode is not None:
+        _running.pop(image_id, None)
+        return
+    proc = running.process
     proc.terminate()
     try:
         await asyncio.wait_for(proc.wait(), timeout=10)
@@ -67,5 +96,5 @@ async def stop(image_id: str) -> None:
 
 
 def is_running(image_id: str) -> bool:
-    proc = _running.get(image_id)
-    return bool(proc and proc.returncode is None)
+    running = _running.get(image_id)
+    return bool(running and running.process.returncode is None)

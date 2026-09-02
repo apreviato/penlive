@@ -28,6 +28,8 @@ from .. import paths
 
 # A whole disk (/dev/sda) or a partition (/dev/sda1, /dev/nvme0n1p2).
 DEVICE_RE = re.compile(r"^/dev/(sd[a-z]+\d*|nvme\d+n\d+(p\d+)?|mmcblk\d+(p\d+)?|vd[a-z]+\d*)$")
+DISK_RE = re.compile(r"^/dev/(sd[a-z]+|nvme\d+n\d+|mmcblk\d+|vd[a-z]+)$")
+PARTITION_RE = re.compile(r"^/dev/(sd[a-z]+\d+|nvme\d+n\d+p\d+|mmcblk\d+p\d+|vd[a-z]+\d+)$")
 
 SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
@@ -43,6 +45,35 @@ def require_device(args: dict, key: str = "device") -> str:
     if not Path(value).exists():
         raise OperationError(f"{value} does not exist")
     return value
+
+
+def require_disk(args: dict, key: str = "device") -> str:
+    value = require_device(args, key)
+    if not DISK_RE.match(value):
+        raise OperationError(f"{key!r} must be a whole disk such as /dev/sda (got {value!r})")
+    return value
+
+
+def require_partition(args: dict, key: str = "device") -> str:
+    value = require_device(args, key)
+    if not PARTITION_RE.match(value):
+        raise OperationError(f"{key!r} must be a partition such as /dev/sda1 (got {value!r})")
+    return value
+
+
+def require_unmounted(device: str) -> str:
+    """Reject a mounted device before invoking filesystem-writing tools."""
+    try:
+        mountinfo = Path("/proc/self/mountinfo").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        mountinfo = ""
+    for line in mountinfo.splitlines():
+        # Fields after " - " are: filesystem, source, super options.
+        _, separator, tail = line.partition(" - ")
+        fields = tail.split()
+        if separator and len(fields) >= 2 and fields[1] == device:
+            raise OperationError(f"{device} is mounted; unmount it before running this operation")
+    return device
 
 
 def require_choice(args: dict, key: str, allowed: set[str], default: str | None = None) -> str:
@@ -107,17 +138,17 @@ class Operation:
 # --------------------------------------------------------------------------
 
 def _smart_scan(args: dict) -> list[str]:
-    return ["smartctl", "-a", require_device(args)]
+    return ["smartctl", "-a", require_disk(args)]
 
 
 def _smart_selftest(args: dict) -> list[str]:
     kind = require_choice(args, "test", {"short", "long"}, default="short")
-    return ["smartctl", "-t", kind, require_device(args)]
+    return ["smartctl", "-t", kind, require_disk(args)]
 
 
 def _fsck_check(args: dict) -> list[str]:
     """Read-only check. `-n` answers 'no' to every repair prompt."""
-    device = require_device(args)
+    device = require_unmounted(require_partition(args))
     fstype = require_choice(args, "fstype", {"auto", "ext", "ntfs", "vfat", "exfat"}, default="auto")
     if fstype == "ntfs":
         return ["ntfsfix", "--no-action", device]
@@ -131,7 +162,7 @@ def _fsck_check(args: dict) -> list[str]:
 
 
 def _fsck_repair(args: dict) -> list[str]:
-    device = require_device(args)
+    device = require_unmounted(require_partition(args))
     fstype = require_choice(args, "fstype", {"ext", "ntfs", "vfat", "exfat"})
     if fstype == "ntfs":
         return ["ntfsfix", "-d", device]
@@ -162,29 +193,38 @@ _PARTCLONE_BY_FS = {
     "xfs": "partclone.xfs",
 }
 
+KNOWN_TOOLS = {
+    "lsblk", "smartctl", "fsck", "e2fsck", "ntfsfix", "fsck.vfat", "fsck.exfat",
+    "dd", "photorec", "localectl", *_PARTCLONE_BY_FS.values(),
+}
+
 
 def _backup_partition(args: dict) -> list[str]:
     """Filesystem-aware image (partclone copies only used blocks)."""
-    device = require_device(args)
+    device = require_unmounted(require_partition(args))
     fstype = require_choice(args, "fstype", set(_PARTCLONE_BY_FS))
     name = require_safe_name(args, "name")
     backup_dir().mkdir(parents=True, exist_ok=True)
     dest = backup_dir() / f"{name}.pcl"
+    if dest.exists():
+        raise OperationError(f"backup already exists: {dest.name}")
     return [_PARTCLONE_BY_FS[fstype], "-c", "-s", device, "-O", str(dest), "-F", "-L", "/dev/null"]
 
 
 def _backup_partition_raw(args: dict) -> list[str]:
     """Sector-by-sector fallback for filesystems partclone doesn't know."""
-    device = require_device(args)
+    device = require_unmounted(require_partition(args))
     name = require_safe_name(args, "name")
     backup_dir().mkdir(parents=True, exist_ok=True)
     dest = backup_dir() / f"{name}.img"
+    if dest.exists():
+        raise OperationError(f"backup already exists: {dest.name}")
     return ["dd", f"if={device}", f"of={dest}", "bs=4M", "conv=fsync", "status=progress"]
 
 
 def _restore_partition(args: dict) -> list[str]:
     image = require_backup_image(args)
-    device = require_device(args)
+    device = require_unmounted(require_partition(args))
     if image.suffix == ".img":
         return ["dd", f"if={image}", f"of={device}", "bs=4M", "conv=fsync", "status=progress"]
     fstype = require_choice(args, "fstype", set(_PARTCLONE_BY_FS))
@@ -204,6 +244,8 @@ def _photorec_scan(args: dict) -> list[str]:
     device = require_device(args)
     name = require_safe_name(args, "name")
     dest = recovery_dir() / name
+    if dest.exists() and any(dest.iterdir()):
+        raise OperationError(f"recovery destination is not empty: {name}")
     dest.mkdir(parents=True, exist_ok=True)
     filetype = require_choice(
         args, "filetype", {"everything", "jpg", "pdf", "doc", "zip", "mp4"}, default="everything"
@@ -220,18 +262,20 @@ LAYOUT_RE = re.compile(r"^[a-z]{2,8}$")
 VARIANT_RE = re.compile(r"^[a-z0-9_-]{0,32}$")
 
 
-def _set_console_keymap(args: dict) -> list[str]:
-    """Persist the layout for the console and for future X sessions.
-
-    The running X session is updated separately by the API with setxkbmap;
-    this writes the setting that survives a reboot.
-    """
+def validate_keyboard_args(args: dict) -> tuple[str, str]:
+    """Validate and return a keyboard layout/variant pair."""
     layout = args.get("layout", "")
     variant = args.get("variant", "") or ""
     if not LAYOUT_RE.match(layout):
         raise OperationError(f"invalid keyboard layout {layout!r}")
     if not VARIANT_RE.match(variant):
         raise OperationError(f"invalid keyboard variant {variant!r}")
+    return layout, variant
+
+
+def _set_console_keymap(args: dict) -> list[str]:
+    """Legacy command plan retained for operation inventory and validation tests."""
+    layout, variant = validate_keyboard_args(args)
     cmd = ["localectl", "set-x11-keymap", layout]
     if variant:
         cmd += ["pc105", variant]
@@ -248,14 +292,14 @@ OPERATIONS: dict[str, Operation] = {
         Operation("list_block_devices", _list_block_devices, "List block devices", requires=("lsblk",)),
         Operation("smart_scan", _smart_scan, "Read SMART attributes", requires=("smartctl",)),
         Operation("smart_selftest", _smart_selftest, "Start a SMART self-test", requires=("smartctl",)),
-        Operation("fsck_check", _fsck_check, "Check a filesystem read-only", requires=("fsck",)),
-        Operation("fsck_repair", _fsck_repair, "Repair a filesystem", destructive=True, requires=("fsck",)),
+        Operation("fsck_check", _fsck_check, "Check a filesystem read-only"),
+        Operation("fsck_repair", _fsck_repair, "Repair a filesystem", destructive=True),
         Operation("backup_partition", _backup_partition, "Image a partition (used blocks only)",
-                  requires=("partclone.extfs",), progress="partclone"),
+                  progress="partclone"),
         Operation("backup_partition_raw", _backup_partition_raw, "Image a partition sector by sector",
                   requires=("dd",), progress="dd"),
         Operation("restore_partition", _restore_partition, "Write an image back to a partition",
-                  destructive=True, requires=("partclone.restore",), progress="partclone"),
+                  destructive=True, progress="partclone"),
         Operation("photorec_scan", _photorec_scan, "Carve deleted files from a device",
                   requires=("photorec",), progress="photorec"),
         Operation("set_console_keymap", _set_console_keymap, "Persist the keyboard layout",
@@ -271,4 +315,8 @@ def build_argv(op_name: str, args: dict) -> tuple[list[str], Operation]:
     missing = op.missing_tools()
     if missing:
         raise OperationError(f"operation {op_name!r} needs missing tool(s): {', '.join(missing)}")
-    return op.build(args), op
+    argv = op.build(args)
+    executable = argv[0]
+    if not (shutil.which(executable) or (Path(executable).is_absolute() and Path(executable).is_file())):
+        raise OperationError(f"operation {op_name!r} needs missing tool: {executable}")
+    return argv, op

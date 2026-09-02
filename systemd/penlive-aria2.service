@@ -1,11 +1,14 @@
 [Unit]
 Description=PenLive aria2 download engine (JSON-RPC)
-After=network.target local-fs.target
+After=network.target local-fs.target penlive-expand.service penlive-storage.service
+RequiresMountsFor=/data/images/.downloads
 
 [Service]
 Type=exec
 User=penlive
 Group=penlive
+ExecStartPre=/usr/bin/mkdir -p /data/images/.downloads
+ExecStartPre=/usr/bin/touch /data/images/.downloads/aria2.session
 # Its own service, not a child of the API: a download must survive an API
 # restart or crash. app/services/downloader.resume_watchers() re-attaches to
 # whatever is still running here on the next API startup.
@@ -24,8 +27,15 @@ ExecStart=/usr/bin/aria2c \
     --split=4 \
     --auto-file-renaming=false \
     --allow-overwrite=true \
-    --file-allocation=none
-Restart=on-failure
+    --file-allocation=none \
+    --max-tries=0 \
+    --retry-wait=5 \
+    --connect-timeout=15 \
+    --timeout=60 \
+    --input-file=/data/images/.downloads/aria2.session \
+    --save-session=/data/images/.downloads/aria2.session \
+    --save-session-interval=30
+Restart=always
 RestartSec=2
 
 NoNewPrivileges=yes

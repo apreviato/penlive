@@ -107,7 +107,7 @@ def test_boot_is_refused_when_secure_boot_would_reject_the_kernel(client, monkey
         "id": "ubuntu-test", "name": "Ubuntu Test", "family": "ubuntu",
         "sources": [{"url": "https://example.invalid/u.iso"}],
     })
-    repo.set_image_status("ubuntu-test", "ready", path=str(iso), adapter="ubuntu")
+    repo.set_image_status("ubuntu-test", "ready", path=str(iso), adapter="ubuntu", verified=True)
 
     monkeypatch.setattr(
         "app.routers.boot.prepare_boot",
@@ -129,6 +129,20 @@ def test_boot_is_refused_when_secure_boot_would_reject_the_kernel(client, monkey
     assert resp.json()["detail"]["error"] == "secure_boot_key_not_enrolled"
 
 
+def test_unverified_local_iso_requires_explicit_approval(client, tmp_path):
+    from app import repo
+
+    iso = tmp_path / "local.iso"
+    iso.write_bytes(b"x")
+    repo.upsert_local_image("local-test", "Local test", str(iso), iso.stat().st_size)
+    repo.set_image_status("local-test", "ready", verified=False)
+
+    resp = client.post("/api/boot", json={"image_id": "local-test"})
+
+    assert resp.status_code == 409
+    assert resp.json()["detail"]["error"] == "unverified_image"
+
+
 def test_boot_proceeds_when_secure_boot_is_off(client, monkeypatch, tmp_path):
     from app import repo
     from app.adapters.base import BootConfig
@@ -139,7 +153,7 @@ def test_boot_proceeds_when_secure_boot_is_off(client, monkeypatch, tmp_path):
         "id": "debian-test", "name": "Debian Test", "family": "debian",
         "sources": [{"url": "https://example.invalid/d.iso"}],
     })
-    repo.set_image_status("debian-test", "ready", path=str(iso), adapter="debian")
+    repo.set_image_status("debian-test", "ready", path=str(iso), adapter="debian", verified=True)
 
     monkeypatch.setattr(
         "app.routers.boot.prepare_boot",

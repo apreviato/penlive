@@ -23,7 +23,7 @@ def test_tools_listing_works_without_the_daemon(client):
     resp = client.get("/api/tools")
     assert resp.status_code == 200
     body = resp.json()
-    assert len(body["tools"]) == 8
+    assert len(body["tools"]) == 10
     assert body["daemon_available"] is False
 
 

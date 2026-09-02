@@ -26,7 +26,14 @@ class BackupPlugin(Plugin):
     category = "backup"
     danger = "safe"
     icon = "⇩"
-    required_tools = ("partclone.extfs",)
+    required_tools = ()
+    option_requirements = {
+        "fstype": {
+            "ext": ("partclone.extfs",), "ntfs": ("partclone.ntfs",),
+            "vfat": ("partclone.fat",), "exfat": ("partclone.exfat",),
+            "btrfs": ("partclone.btrfs",), "xfs": ("partclone.xfs",), "raw": ("dd",),
+        }
+    }
 
     params = (
         Param(

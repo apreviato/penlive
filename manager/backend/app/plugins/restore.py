@@ -16,7 +16,14 @@ class RestorePlugin(Plugin):
     category = "backup"
     danger = "destructive"
     icon = "⇧"
-    required_tools = ("partclone.restore",)
+    required_tools = ()
+    option_requirements = {
+        "fstype": {
+            "ext": ("partclone.extfs",), "ntfs": ("partclone.ntfs",),
+            "vfat": ("partclone.fat",), "exfat": ("partclone.exfat",),
+            "btrfs": ("partclone.btrfs",), "xfs": ("partclone.xfs",),
+        }
+    }
 
     params = (
         Param(

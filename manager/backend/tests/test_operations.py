@@ -13,7 +13,12 @@ from app.daemon.operations import OperationError
 @pytest.fixture
 def fake_device(tmp_path, monkeypatch):
     """Satisfy the exists() check without needing a real block device."""
-    monkeypatch.setattr(operations.Path, "exists", lambda self: True)
+    original_exists = operations.Path.exists
+    monkeypatch.setattr(
+        operations.Path,
+        "exists",
+        lambda self: True if self.as_posix().startswith("/dev/") else original_exists(self),
+    )
 
 
 @pytest.fixture
@@ -57,6 +62,30 @@ def test_rejects_nonexistent_device(monkeypatch):
     monkeypatch.setattr(operations.Path, "exists", lambda self: False)
     with pytest.raises(OperationError, match="does not exist"):
         operations.require_device({"device": "/dev/sdz"})
+
+
+def test_whole_disk_and_partition_are_not_interchangeable(fake_device):
+    assert operations.require_disk({"device": "/dev/sda"}) == "/dev/sda"
+    assert operations.require_partition({"device": "/dev/sda1"}) == "/dev/sda1"
+    with pytest.raises(OperationError, match="whole disk"):
+        operations.require_disk({"device": "/dev/sda1"})
+    with pytest.raises(OperationError, match="partition"):
+        operations.require_partition({"device": "/dev/sda"})
+
+
+def test_mounted_filesystem_is_rejected(monkeypatch):
+    original_read_text = operations.Path.read_text
+    monkeypatch.setattr(
+        operations.Path,
+        "read_text",
+        lambda self, **kwargs: (
+            "31 22 8:1 / /media/disk rw - ext4 /dev/sda1 rw\n"
+            if self.as_posix() == "/proc/self/mountinfo"
+            else original_read_text(self, **kwargs)
+        ),
+    )
+    with pytest.raises(OperationError, match="is mounted"):
+        operations.require_unmounted("/dev/sda1")
 
 
 # ---- choice validation -----------------------------------------------------
@@ -133,3 +162,24 @@ def test_keyboard_layout_rejects_injection(tools_present):
 def test_keyboard_layout_accepts_valid_input(tools_present):
     argv, _ = operations.build_argv("set_console_keymap", {"layout": "br"})
     assert argv == ["localectl", "set-x11-keymap", "br"]
+
+
+def test_dynamic_filesystem_tool_is_checked_after_validating_choice(fake_device, monkeypatch):
+    monkeypatch.setattr(
+        operations.shutil, "which",
+        lambda name: f"/usr/sbin/{name}" if name == "partclone.extfs" else None,
+    )
+    operations.build_argv("backup_partition", {"device": "/dev/sda1", "name": "ok", "fstype": "ext"})
+    with pytest.raises(OperationError, match="partclone.exfat"):
+        operations.build_argv(
+            "backup_partition", {"device": "/dev/sda1", "name": "missing", "fstype": "exfat"}
+        )
+
+
+def test_backup_never_overwrites_an_existing_image(fake_device, tools_present, tmp_path, monkeypatch):
+    monkeypatch.setattr(operations, "backup_dir", lambda: tmp_path)
+    (tmp_path / "important.pcl").write_bytes(b"keep")
+    with pytest.raises(OperationError, match="already exists"):
+        operations.build_argv(
+            "backup_partition", {"device": "/dev/sda1", "name": "important", "fstype": "ext"}
+        )

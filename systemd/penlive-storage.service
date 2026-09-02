@@ -1,0 +1,12 @@
+[Unit]
+Description=Prepare writable PenLive storage directories
+After=local-fs.target penlive-expand.service
+Before=penlive-daemon.service penlive-aria2.service penlive-api.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/penlive/prepare-storage.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

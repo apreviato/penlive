@@ -2,7 +2,7 @@
 Description=PenLive privileged daemon (mount, boot state, kexec, USB write)
 Documentation=file:///opt/penlive/docs/ARCHITECTURE.md
 DefaultDependencies=no
-After=local-fs.target
+After=local-fs.target penlive-storage.service
 Before=penlive-api.service
 
 [Service]

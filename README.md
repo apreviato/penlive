@@ -22,11 +22,14 @@ UEFI → GRUB → Debian Live (SquashFS + OverlayFS) → FastAPI + Chromium kios
 | Resumable downloads via aria2 + SHA-256 verification | done |
 | Adapters: Debian, Ubuntu, Fedora, Arch, Proxmox, generic EFI | done |
 | React kiosk frontend | done |
-| Native boot, Run VM (QEMU/KVM), Mount, Write-to-USB | done |
+| Native boot, embedded noVNC VM, Mount, Write-to-USB | done |
 | OS-style status bar: IP, keyboard, storage, clock | done |
 | First-run setup wizard (keyboard + network) | done |
 | Three-layer kiosk lockdown (VT, WM, browser) | done |
-| 8 tools: backup, restore, SMART, repair, recovery, provisioning | done |
+| 10 tools: backup, restore, SMART, repair, recovery, provisioning, hardware/network reports | done |
+| File manager for PENDATA, mounted ISOs and local/removable drives; copy/move | done |
+| Unprivileged interactive Terminal tab | done |
+| Catalog with 16 verified images across Debian/Ubuntu/Fedora/Arch/Proxmox/Mint/Rocky/Alpine | done |
 | Secure Boot: signed boot chain + machine-owner-key signing for downloaded systems | done |
 | Windows / wimboot, A/B updates, legacy BIOS | **not implemented** — see [Scope](#scope-and-limits) |
 
@@ -58,14 +61,15 @@ naming the reason in each case.
 ┌──────────────────────────────────────────────────────────────┐
 │ ▣ PenLive   ● HomeWifi 192.168.1.42  ⌨ BR  ▤ 127 GB  09:41 ⏻│
 ├──────────────────────────────────────────────────────────────┤
-│  Systems  │  Tools  │  Settings                              │
+│ Systems │ Files │ Tools │ Terminal │ VM │ Settings            │
 └──────────────────────────────────────────────────────────────┘
 ```
 
 A status bar is always visible with connection state, IP address, keyboard
-layout, free space, clock and shutdown. Three tabs: **Systems** (catalog,
-download, boot, VM, mount), **Tools** (the 8 tools) and **Settings** (network,
-keyboard, system information).
+layout, free space, clock and shutdown. Tabs cover **Systems** (catalog,
+download, boot, VM, mount), **Files** (PENDATA, ISOs and attached drives),
+**Tools**, an unprivileged **Terminal**, the embedded **VM** display and
+**Settings**.
 
 The first run shows a two-step wizard — keyboard, then network. After that,
 booting goes straight to the catalog, and the wizard only returns when the
@@ -74,7 +78,8 @@ machine has no connection.
 ## Tools
 
 Backup · Restore · SMART · Filesystem Check & Repair · Linux Boot Repair ·
-Windows Repair · Deleted File Recovery · Provision Machine
+Windows Repair · Deleted File Recovery · Provision Machine · Hardware Report ·
+Network Diagnostics
 
 All driven from the interface, with a live output console and cancellation.
 Destructive actions require explicit confirmation, and the stick's own
@@ -90,12 +95,13 @@ command line. See [docs/PLUGINS.md](docs/PLUGINS.md).
 make test
 ```
 
-205 tests: 39 in the builder (partitioning, safety guards, provisioning plans,
-the image path, GRUB module selection and the Secure Boot chain) and 166 in the
-backend (adapters against synthetic ISOs, GRUB
+239 tests: 46 in the builder (partitioning, safety guards, provisioning plans,
+the image path, GRUB module selection, the Secure Boot chain and the graphical
+boot handoff and runtime storage permissions) and 192 in the backend (adapters against synthetic ISOs, GRUB
 menuentry generation, SHA-256 verification, the daemon protocol, adversarial
-validation of privileged arguments, the job runner, disk inventory, the HTTP
-API and the catalog schema).
+validation of privileged arguments, cancellation, local ISO import, safe file
+management and cross-drive transfers, aria2 crash recovery, the job runner,
+disk inventory, the HTTP API and the catalog schema).
 
 ## Building a real stick
 
@@ -161,7 +167,10 @@ GPT
 
 ISOs live on `PENDATA`, **separate** from persistence: a factory reset erases
 no downloads. `PENDATA` is exFAT so the stick can be plugged into
-Windows/macOS to copy ISOs onto it by hand.
+Windows/macOS to copy ISOs into `images/` by hand. The manager discovers them
+at startup or from **Files → Scan ISOs**, verifies a known catalog checksum,
+and inspects boot support. Unknown ISOs remain clearly marked unverified and
+require an extra confirmation before boot.
 
 The `persistence` label is not ours to choose — Debian live-boot scans for a
 partition with exactly that name.

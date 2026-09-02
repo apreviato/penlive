@@ -29,6 +29,9 @@ CREATE TABLE IF NOT EXISTS images (
     status TEXT NOT NULL DEFAULT 'not_downloaded',
     source_url TEXT,
     capabilities_json TEXT NOT NULL DEFAULT '{}',
+    verified INTEGER NOT NULL DEFAULT 0,
+    origin TEXT NOT NULL DEFAULT 'catalog',
+    inspection_error TEXT,
     added_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -80,6 +83,16 @@ def _connect() -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.executescript(SCHEMA)
+    # Existing sticks keep their SQLite database across manager upgrades.
+    # CREATE TABLE IF NOT EXISTS does not add new columns, so apply the small
+    # forward-only migrations here before any repository query can use them.
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(images)")}
+    if "verified" not in columns:
+        conn.execute("ALTER TABLE images ADD COLUMN verified INTEGER NOT NULL DEFAULT 0")
+    if "origin" not in columns:
+        conn.execute("ALTER TABLE images ADD COLUMN origin TEXT NOT NULL DEFAULT 'catalog'")
+    if "inspection_error" not in columns:
+        conn.execute("ALTER TABLE images ADD COLUMN inspection_error TEXT")
     conn.commit()
     return conn
 

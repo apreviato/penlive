@@ -11,6 +11,7 @@ import pytest
 
 from app import paths, repo
 from app.services import downloader
+from app.services import aria2
 
 CATALOG_ENTRY = {
     "id": "debian-13-live-standard",
@@ -120,3 +121,107 @@ def test_sha256_helper_matches_hashlib(tmp_path):
     payload = b"chunked across the 1 MiB read boundary" * 50_000
     f.write_bytes(payload)
     assert downloader._sha256_of(f) == hashlib.sha256(payload).hexdigest()
+
+
+@pytest.mark.asyncio
+async def test_new_downloads_retry_transient_network_outages(monkeypatch):
+    captured = {}
+
+    async def fake_call(method, params):
+        captured["method"] = method
+        captured["params"] = params
+        return "gid-retry"
+
+    monkeypatch.setattr(aria2, "_call", fake_call)
+    gid = await aria2.add_uri("https://example.invalid/system.iso", "system.iso", "/data/images/.downloads")
+
+    assert gid == "gid-retry"
+    assert captured["method"] == "aria2.addUri"
+    options = captured["params"][1]
+    assert options["continue"] == "true"
+    assert options["max-tries"] == "0"
+    assert options["retry-wait"] == "5"
+    assert options["auto-file-renaming"] == "false"
+
+
+@pytest.mark.asyncio
+async def test_start_adopts_complete_orphan_without_aria2(tmp_path, monkeypatch, temp_db):
+    images = tmp_path / "images"
+    downloads = images / ".downloads"
+    downloads.mkdir(parents=True)
+    content = b"complete iso"
+    orphan = downloads / "debian-13-live-standard.iso"
+    orphan.write_bytes(content)
+    monkeypatch.setattr(paths, "IMAGES_DIR", images)
+    monkeypatch.setattr(paths, "DOWNLOADS_TMP_DIR", downloads)
+    monkeypatch.setattr(downloader, "process_downloaded_image", lambda *args: None)
+    entry = {**CATALOG_ENTRY, "sha256": hashlib.sha256(content).hexdigest(), "size": len(content)}
+    repo.upsert_image_from_catalog(entry)
+
+    async def must_not_download(*args, **kwargs):
+        raise AssertionError("a complete verified orphan must be adopted")
+
+    monkeypatch.setattr(aria2, "add_uri", must_not_download)
+    download_id = await downloader.start(entry["id"])
+
+    assert repo.get_download(download_id)["state"] == "complete"
+    assert (images / orphan.name).read_bytes() == content
+    assert repo.get_image(entry["id"])["verified"] is True
+
+
+@pytest.mark.asyncio
+async def test_start_removes_unresumable_partial_without_control_file(tmp_path, monkeypatch, temp_db):
+    images = tmp_path / "images"
+    downloads = images / ".downloads"
+    downloads.mkdir(parents=True)
+    orphan = downloads / "debian-13-live-standard.iso"
+    orphan.write_bytes(b"partial")
+    monkeypatch.setattr(paths, "IMAGES_DIR", images)
+    monkeypatch.setattr(paths, "DOWNLOADS_TMP_DIR", downloads)
+    repo.upsert_image_from_catalog({**CATALOG_ENTRY, "sha256": "a" * 64, "size": 999})
+    monkeypatch.setattr(aria2, "tell_active", lambda: _async_value([]))
+    monkeypatch.setattr(aria2, "tell_waiting", lambda: _async_value([]))
+    monkeypatch.setattr(aria2, "tell_stopped", lambda: _async_value([]))
+
+    async def fake_add(*args):
+        assert not orphan.exists()
+        return "new-gid"
+
+    async def fake_watch(*args):
+        return None
+
+    monkeypatch.setattr(aria2, "add_uri", fake_add)
+    monkeypatch.setattr(downloader, "_watch", fake_watch)
+    await downloader.start(CATALOG_ENTRY["id"])
+
+
+async def _async_value(value):
+    return value
+
+
+@pytest.mark.asyncio
+async def test_watcher_survives_a_temporary_aria2_rpc_restart(monkeypatch, temp_db):
+    repo.upsert_image_from_catalog(CATALOG_ENTRY)
+    download_id = repo.create_download(CATALOG_ENTRY["id"], "gid-restart", 100)
+    calls = 0
+
+    async def fake_status(gid):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise aria2.Aria2Unavailable("restarting")
+        return {
+            "status": "error", "completedLength": "20", "downloadSpeed": "0",
+            "errorMessage": "permanent mirror error", "files": [],
+        }
+
+    async def no_wait(_seconds):
+        return None
+
+    monkeypatch.setattr(aria2, "status", fake_status)
+    monkeypatch.setattr(downloader.asyncio, "sleep", no_wait)
+
+    await downloader._watch(CATALOG_ENTRY["id"], download_id, "gid-restart", None)
+
+    assert calls == 2
+    assert repo.get_download(download_id)["error"] == "permanent mirror error"

@@ -39,6 +39,66 @@ async def start(image_id: str) -> int:
 
     paths.DOWNLOADS_TMP_DIR.mkdir(parents=True, exist_ok=True)
     out_name = f"{image_id}.iso"
+    final_path = paths.IMAGES_DIR / out_name
+    staged_path = paths.DOWNLOADS_TMP_DIR / out_name
+    control_path = Path(f"{staged_path}.aria2")
+
+    # Recover cleanly after an API/aria2 crash. A complete verified ISO should
+    # be adopted, not downloaded again; a partial file without aria2's control
+    # file cannot be resumed reliably and is the source of "file already
+    # exists" loops.
+    for candidate in (final_path, staged_path):
+        if candidate.is_file() and await asyncio.to_thread(
+            _looks_complete, candidate, image.get("sha256"), image.get("size_bytes")
+        ):
+            download_id = repo.create_download(image_id, None, image.get("size_bytes"))
+            if candidate == final_path:
+                repo.finish_download(download_id, state="complete")
+                repo.set_image_status(
+                    image_id, "downloaded", path=str(final_path), size_bytes=final_path.stat().st_size,
+                    verified=bool(image.get("sha256")), inspection_error=None,
+                )
+                await asyncio.to_thread(process_downloaded_image, image_id, final_path)
+            else:
+                await _finalize(
+                    image_id, download_id, {"files": [{"path": str(staged_path)}]}, image.get("sha256")
+                )
+            return download_id
+
+    if staged_path.exists() and not control_path.exists():
+        staged_path.unlink()
+    if control_path.exists() and not staged_path.exists():
+        control_path.unlink()
+
+    # If aria2 already owns this path, attach a fresh database watcher rather
+    # than submitting a duplicate URI. Remove stale stopped results so they do
+    # not poison subsequent attempts.
+    wanted_path = str(staged_path)
+    try:
+        active, waiting, stopped = await asyncio.gather(
+            aria2.tell_active(), aria2.tell_waiting(), aria2.tell_stopped()
+        )
+        for state in [*active, *waiting]:
+            files = state.get("files") or []
+            if files and files[0].get("path") == wanted_path:
+                gid = state["gid"]
+                download_id = repo.create_download(image_id, gid, image.get("size_bytes"))
+                repo.set_image_status(image_id, "downloading")
+                _active[image_id] = asyncio.create_task(
+                    _watch(image_id, download_id, gid, image.get("sha256"))
+                )
+                return download_id
+        for state in stopped:
+            files = state.get("files") or []
+            if files and files[0].get("path") == wanted_path and state.get("gid"):
+                await aria2.remove_download_result(state["gid"])
+    except aria2.Aria2Unavailable:
+        raise
+    except aria2.Aria2Error:
+        # Older aria2 builds may not retain/query stopped results. addUri below
+        # still works and remains the authoritative operation.
+        pass
+
     gid = await aria2.add_uri(image["source_url"], out_name, str(paths.DOWNLOADS_TMP_DIR))
     download_row_id = repo.create_download(image_id, gid, image.get("size_bytes"))
     repo.set_image_status(image_id, "downloading")
@@ -50,7 +110,15 @@ async def start(image_id: str) -> int:
 async def _watch(image_id: str, download_row_id: int, gid: str, expected_sha256: str | None) -> None:
     try:
         while True:
-            st = await aria2.status(gid)
+            try:
+                st = await aria2.status(gid)
+            except aria2.Aria2Unavailable:
+                # The aria2 service may be inside systemd's short restart
+                # window. It owns the transfer and session independently, so
+                # losing RPC briefly is not a download failure.
+                log.warning("aria2 RPC temporarily unavailable while watching %s", image_id)
+                await asyncio.sleep(2)
+                continue
             completed = int(st.get("completedLength", 0))
             speed = int(st.get("downloadSpeed", 0))
             state = st.get("status")
@@ -98,7 +166,10 @@ async def _finalize(image_id: str, download_row_id: int, aria2_status: dict, exp
     part_path.replace(final_path)
 
     repo.finish_download(download_row_id, state="complete")
-    repo.set_image_status(image_id, "downloaded", path=str(final_path), size_bytes=final_path.stat().st_size)
+    repo.set_image_status(
+        image_id, "downloaded", path=str(final_path), size_bytes=final_path.stat().st_size,
+        verified=bool(expected_sha256), inspection_error=None,
+    )
 
     try:
         await asyncio.to_thread(process_downloaded_image, image_id, final_path)
@@ -112,6 +183,12 @@ def _sha256_of(path: Path) -> str:
         for chunk in iter(lambda: fh.read(1024 * 1024), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def _looks_complete(path: Path, expected_sha256: str | None, expected_size: int | None) -> bool:
+    if expected_sha256:
+        return _sha256_of(path).lower() == expected_sha256.lower()
+    return bool(expected_size and path.stat().st_size == expected_size)
 
 
 async def cancel(image_id: str) -> None:
@@ -138,12 +215,12 @@ async def resume_watchers() -> None:
         log.info("PENLIVE_OFFLINE set; skipping download-watcher resume")
         return
     try:
-        active = await aria2.tell_active()
+        active, waiting = await asyncio.gather(aria2.tell_active(), aria2.tell_waiting())
     except aria2.Aria2Error:
         log.info("aria2 RPC not reachable at startup; skipping download-watcher resume")
         return
 
-    for st in active:
+    for st in [*active, *waiting]:
         gid = st.get("gid")
         row = repo.find_download_by_gid(gid) if gid else None
         if not row or row["image_id"] in _active:

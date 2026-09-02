@@ -22,10 +22,10 @@ async def list_tools():
     """
     try:
         ops = await daemon_client.call("list_operations")
-        available_ops = {o["name"]: o for o in ops["operations"]}
+        tool_availability = ops.get("tools", {})
         daemon_up = True
     except daemon_client.DaemonUnavailable:
-        available_ops = {}
+        tool_availability = {}
         daemon_up = False
 
     items = []
@@ -34,9 +34,15 @@ async def list_tools():
 
         missing: list[str] = []
         if daemon_up:
-            for op in available_ops.values():
-                if not op["available"]:
-                    missing.extend(t for t in op["missing_tools"] if t in plugin.required_tools)
+            missing.extend(tool for tool in plugin.required_tools if not tool_availability.get(tool, False))
+
+            for param in manifest["params"]:
+                requirements = plugin.option_requirements.get(param["name"], {})
+                if requirements:
+                    param["options"] = [
+                        option for option in param["options"]
+                        if all(tool_availability.get(tool, False) for tool in requirements.get(option["value"], ()))
+                    ]
 
         manifest["available"] = daemon_up and not missing
         manifest["missing_tools"] = sorted(set(missing))

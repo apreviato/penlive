@@ -8,6 +8,7 @@ business logic don't tangle. Reference: https://aria2.github.io/manual/en/html/a
 """
 from __future__ import annotations
 
+import asyncio
 import itertools
 from typing import Any
 
@@ -32,17 +33,29 @@ class Aria2Unavailable(Aria2Error):
 
 async def _call(method: str, params: list[Any]) -> Any:
     payload = {"jsonrpc": "2.0", "id": str(next(_id_counter)), "method": method, "params": params}
-    try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.post(paths.ARIA2_RPC_URL, json=payload)
-        resp.raise_for_status()
-    except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout) as exc:
-        raise Aria2Unavailable(
-            f"The download engine (aria2) is not reachable at {paths.ARIA2_RPC_URL}. "
-            "Check the penlive-aria2 service."
-        ) from exc
-    except httpx.HTTPStatusError as exc:
-        raise Aria2Error(f"aria2 returned HTTP {exc.response.status_code}") from exc
+    last_connection_error = None
+    # aria2 is supervised separately and may be between its exit and restart.
+    # A short retry window prevents that harmless service transition from
+    # cancelling a multi-gigabyte download or rejecting the next click.
+    for attempt in range(5):
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.post(paths.ARIA2_RPC_URL, json=payload)
+            resp.raise_for_status()
+            break
+        except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout) as exc:
+            last_connection_error = exc
+            if attempt < 4:
+                await asyncio.sleep(1)
+                continue
+            raise Aria2Unavailable(
+                f"The download engine (aria2) is not responding at {paths.ARIA2_RPC_URL}. "
+                "It is restarted automatically; wait a few seconds and try again."
+            ) from exc
+        except httpx.HTTPStatusError as exc:
+            raise Aria2Error(f"aria2 returned HTTP {exc.response.status_code}") from exc
+    else:  # pragma: no cover - the loop either breaks or raises
+        raise Aria2Unavailable("The download engine is not responding") from last_connection_error
 
     body = resp.json()
     if "error" in body:
@@ -56,9 +69,17 @@ async def add_uri(url: str, out_filename: str, download_dir: str) -> str:
         "dir": download_dir,
         "out": out_filename,
         "continue": "true",
+        "auto-file-renaming": "false",
         "max-connection-per-server": "4",
         "split": "4",
         "allow-overwrite": "true",
+        # Wi-Fi can briefly disappear while NetworkManager reconnects. Keep the
+        # partial ISO and retry indefinitely instead of turning a momentary
+        # outage into a silent failure and a fresh Download button.
+        "max-tries": "0",
+        "retry-wait": "5",
+        "connect-timeout": "15",
+        "timeout": "60",
     }
     return await _call("aria2.addUri", [[url], options])
 
@@ -71,6 +92,14 @@ async def tell_active() -> list[dict[str, Any]]:
     return await _call("aria2.tellActive", [STATUS_KEYS])
 
 
+async def tell_waiting() -> list[dict[str, Any]]:
+    return await _call("aria2.tellWaiting", [0, 1000, STATUS_KEYS])
+
+
+async def tell_stopped() -> list[dict[str, Any]]:
+    return await _call("aria2.tellStopped", [0, 1000, STATUS_KEYS])
+
+
 async def pause(gid: str) -> None:
     await _call("aria2.pause", [gid])
 
@@ -81,3 +110,7 @@ async def unpause(gid: str) -> None:
 
 async def remove(gid: str) -> None:
     await _call("aria2.remove", [gid])
+
+
+async def remove_download_result(gid: str) -> None:
+    await _call("aria2.removeDownloadResult", [gid])

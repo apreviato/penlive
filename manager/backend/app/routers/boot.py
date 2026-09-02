@@ -18,6 +18,14 @@ async def schedule_boot(body: BootRequest):
     image = repo.get_image(body.image_id)
     if not image or not image.get("path"):
         raise HTTPException(404, "image not downloaded")
+    if not image.get("verified") and not body.allow_unverified:
+        raise HTTPException(409, {
+            "error": "unverified_image",
+            "message": (
+                "This ISO has no verified catalog checksum. Confirm that you trust its source "
+                "before booting it."
+            ),
+        })
 
     iso_path = Path(image["path"])
     iso_rel_path = f"images/{iso_path.name}"
@@ -26,6 +34,10 @@ async def schedule_boot(body: BootRequest):
         adapter, cfg = prepare_boot(iso_path, extract_dir, iso_rel_path)
     except NoAdapterMatched:
         raise HTTPException(422, "no boot adapter matched this image; try Mount or Run VM instead")
+    except PermissionError as exc:
+        raise HTTPException(500, "PenLive boot storage is not writable; rebuild the live image with the storage preparation service") from exc
+    except (OSError, ValueError) as exc:
+        raise HTTPException(422, f"could not prepare this ISO for boot: {exc}") from exc
 
     if body.method not in ("auto", cfg.method):
         raise HTTPException(422, f"this image only supports method={cfg.method!r}, not {body.method!r}")
@@ -61,6 +73,8 @@ async def schedule_boot(body: BootRequest):
         await bootmanager.schedule_boot(body.image_id, adapter.family, cfg, image["name"])
     except daemon_client.DaemonUnavailable as exc:
         raise HTTPException(503, str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(500, f"could not write the next-boot configuration: {exc}") from exc
     return {"scheduled": True, "method": cfg.method, "signed_with_mok": signed_with_mok}
 
 

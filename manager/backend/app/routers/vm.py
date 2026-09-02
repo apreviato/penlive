@@ -15,13 +15,13 @@ async def start_vm(body: VmRequest):
     if not image or not image.get("path"):
         raise HTTPException(404, "image not downloaded")
     try:
-        pid = await vm_service.start(
+        session = await vm_service.start(
             body.image_id, image["path"],
             memory_mib=body.memory_mib, cpus=body.cpus, enable_kvm=body.enable_kvm,
         )
     except vm_service.VmError as exc:
         raise HTTPException(400, str(exc))
-    return {"pid": pid, "kvm": vm_service.kvm_available()}
+    return {**session, "kvm": vm_service.kvm_available()}
 
 
 @router.post("/{image_id}/stop")
