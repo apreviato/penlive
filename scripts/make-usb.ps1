@@ -72,7 +72,10 @@ $LogFile  = Join-Path $RepoRoot 'make-usb.log'
 $WslWork  = '/root/penlive-build'
 
 $script:Step = 0
-$script:TotalSteps = 5
+# Recomputed once the route is known: disk passthrough does the build and the
+# write in one step, whereas the image fallback adds a separate build, write
+# and verify. Guessing a single number up front produced "[6/5]".
+$script:TotalSteps = 4
 
 # ---------------------------------------------------------------- output ----
 
@@ -364,6 +367,12 @@ if (-not $FlashOnly -and -not $ForceImageMode) {
 # ------------------------------------------------ 4b. image route ----
 
 if (-not $usedPassthrough) {
+    # From here the route is settled: an image build (unless one was handed to
+    # us), then a write, then a verify.
+    $remaining = 3
+    if ($FlashOnly) { $remaining = 2 }
+    $script:TotalSteps = $script:Step + $remaining
+
     if (-not $FlashOnly) {
         Step "Building an image inside WSL"
         Warn "the data partition will be capped at $ImageSizeMib MiB rather than filling the stick"
