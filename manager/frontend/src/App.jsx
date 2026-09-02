@@ -84,7 +84,7 @@ export default function App() {
     return (
       <div className="app">
         <div className="empty">
-          <span className="spinner" /> Starting BootStack…
+          <span className="spinner" /> Starting PenLive…
         </div>
       </div>
     );

@@ -1,4 +1,4 @@
-.PHONY: help frontend backend-deps test test-builder test-backend live image clean catalog-check catalog-update
+.PHONY: help usb frontend backend-deps test test-builder test-backend live image clean catalog-check catalog-update
 
 REPO_ROOT := $(shell pwd)
 LIVE_OUT  := $(REPO_ROOT)/live/build/out
@@ -6,6 +6,8 @@ DIST      := $(REPO_ROOT)/dist
 
 help:
 	@echo "BootStack targets:"
+	@echo "  make usb             guided end-to-end USB build  [Linux + root]  <- start here"
+	@echo ""
 	@echo "  make frontend        build the React kiosk UI (required before 'make live')"
 	@echo "  make test            run builder + backend test suites"
 	@echo "  make live            build the Debian Live rootfs   [Linux + root + live-build]"
@@ -14,6 +16,11 @@ help:
 	@echo "  make catalog-update  rewrite catalog.json from vendor checksums"
 	@echo "  make dev-api         run the API locally in dev mode"
 	@echo "  make dev-ui          run the Vite dev server"
+
+# Wraps every other step: dependencies, frontend, live system, device choice
+# and the write itself, asking before anything irreversible.
+usb:
+	sudo ./scripts/make-usb.sh
 
 frontend:
 	cd manager/frontend && npm ci && npm run build
@@ -53,4 +60,4 @@ dev-ui:
 	cd manager/frontend && npm run dev
 
 clean:
-	rm -rf live/build dist manager/frontend/dist devdata
+	rm -rf live/build dist manager/frontend/dist devdata make-usb.log

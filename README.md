@@ -97,28 +97,30 @@ API HTTP e schema do catálogo).
 
 ## Construir o pendrive de verdade
 
-Precisa de um host **Debian/Ubuntu** com `live-build`, e root. Ver
-[docs/BUILD.md](docs/BUILD.md) para o passo a passo completo.
+Precisa de um host **Debian/Ubuntu** e root. Um único comando guiado cuida de
+tudo — dependências, interface, sistema live, escolha do dispositivo e gravação:
 
 ```bash
-sudo apt install live-build grub-efi-amd64-bin gdisk dosfstools exfatprogs zstd
+sudo ./scripts/make-usb.sh
 ```
+
+Ele pergunta antes de cada passo irreversível, pula o que já está pronto (o
+build do sistema live leva 20-40 min e não precisa ser repetido para regravar
+um pendrive), e ajusta as partições sozinho em pendrives pequenos. No fim,
+valida o resultado e explica como bootar.
+
+Regravar um segundo pendrive reaproveitando o build:
 
 ```bash
-make live
+sudo ./scripts/make-usb.sh --device /dev/sdb --skip-build
 ```
 
-```bash
-sudo PYTHONPATH=builder python -m bootstack.cli devices
-```
+> A gravação apaga o disco inteiro. O script sempre exige que você digite o
+> caminho do dispositivo para confirmar — nem `--yes` pula essa etapa — e se
+> recusa a escrever no disco do sistema em execução.
 
-```bash
-sudo PYTHONPATH=builder python -m bootstack.cli install /dev/sdb --live-dir live/build/out
-```
-
-> `install` apaga o disco inteiro. Ele exige que você digite o caminho do
-> dispositivo para confirmar e se recusa a escrever no disco do sistema em
-> execução. Use `--dry-run` primeiro para ver o plano exato de comandos.
+Os passos manuais, e como testar em QEMU antes de usar hardware real, estão em
+[docs/BUILD.md](docs/BUILD.md).
 
 ## Layout do pendrive
 

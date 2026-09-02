@@ -9,6 +9,45 @@ derivado — em outro SO, use uma VM ou container Debian.
 sudo apt install live-build grub-efi-amd64-bin grub-common gdisk dosfstools exfatprogs e2fsprogs zstd qemu-system-x86 ovmf nodejs npm python3
 ```
 
+## Caminho rápido: script guiado
+
+Faz todos os passos deste documento numa sequência só, perguntando antes de
+cada etapa irreversível:
+
+```bash
+sudo ./scripts/make-usb.sh
+```
+
+O que ele resolve além de encadear comandos:
+
+- **Dependências** — detecta o que falta e oferece instalar via apt.
+- **Etapas já prontas** — reaproveita frontend e sistema live existentes em vez
+  de reconstruir (o live-build leva 20-40 min).
+- **npm como usuário** — roda `npm ci` com `SUDO_USER`, para não deixar
+  `node_modules` pertencente ao root no seu repositório.
+- **Pendrive pequeno** — um pendrive de "16 GB" tem ~14,9 GiB e não cabe no
+  layout padrão (precisa de 16,5 GiB). O script reduz a partição de
+  persistência automaticamente, em vez de falhar com um erro cru no meio do
+  processo. Abaixo de ~13 GiB ele recusa com uma explicação.
+- **Escolha do alvo** — lista os discos marcando o disco do sistema e os não
+  removíveis, e desmonta partições montadas antes de gravar.
+- **Confirmação** — exige digitar o caminho do dispositivo. Nem `--yes` pula.
+
+Opções úteis:
+
+```bash
+sudo ./scripts/make-usb.sh --device /dev/sdb --skip-build
+```
+
+```bash
+sudo ./scripts/make-usb.sh --data-fs ext4 --persist-mib 16384
+```
+
+Log completo em `make-usb.log`.
+
+O restante deste documento descreve os mesmos passos manualmente, útil para
+depurar uma etapa específica.
+
 ## 1. Frontend
 
 Obrigatório antes do live: a API serve o `dist/` como arquivos estáticos, então
