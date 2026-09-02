@@ -39,9 +39,14 @@
     Reuse the live system already built inside WSL.
 
 .PARAMETER ImageSizeMib
-    Image size for the fallback route (default 20480). Must exceed the fixed
-    partitions (12800 MiB) plus a 4096 MiB minimum data partition, so 16384
-    looks natural but is rejected.
+    Image size for the fallback route. Defaults to the full size of the target
+    stick, so the data partition uses the whole device. Must exceed the fixed
+    partitions (12800 MiB) plus a 4096 MiB minimum data partition.
+
+.PARAMETER FullWrite
+    Write every byte, including all-zero regions. Slower (a 57 GiB image takes
+    half an hour rather than a couple of minutes) but overwrites any data
+    previously on the stick.
 
 .PARAMETER NoVerify
     Skip the read-back verification after an image write.
@@ -62,7 +67,8 @@ param(
     [string] $Distro,
     [switch] $ForceImageMode,
     [switch] $SkipBuild,
-    [int]    $ImageSizeMib = 20480,
+    [int]    $ImageSizeMib = 0,
+    [switch] $FullWrite,
     [switch] $NoVerify
 )
 
@@ -375,7 +381,20 @@ if (-not $usedPassthrough) {
 
     if (-not $FlashOnly) {
         Step "Building an image inside WSL"
-        Warn "the data partition will be capped at $ImageSizeMib MiB rather than filling the stick"
+
+        # Size the image to the stick so PENDATA uses the whole device. This is
+        # only affordable because the writer skips zero blocks: a 57 GiB image
+        # still carries only ~1.3 GiB of real data.
+        if ($ImageSizeMib -le 0) {
+            $ImageSizeMib = [int][Math]::Floor($disk.Size / 1MB)
+            Info ("sizing the image to the stick: {0} MiB ({1:N1} GiB)" -f $ImageSizeMib, ($disk.Size/1GB))
+            if (($disk.Size % 1MB) -ne 0) {
+                # The backup GPT belongs on the last sector. A stick that is not
+                # a whole number of MiB leaves a sliver past the image, which
+                # penlive-expand fixes on first boot.
+                Note "stick is not a whole number of MiB; the last partial MiB stays unused"
+            }
+        }
 
         $skipFlag = ''
         if ($SkipBuild) { $skipFlag = '--skip-build' }
@@ -444,6 +463,9 @@ if (-not $usedPassthrough) {
     Start-Sleep -Seconds 2
 
     Info "writing - do not remove the stick"
+    if (-not $FullWrite) {
+        Note "all-zero blocks are skipped; only the ~1-2 GiB that carries data is written"
+    }
     $bufferSize = 4MB
     $source = $null; $target = $null
     try {
@@ -451,22 +473,50 @@ if (-not $usedPassthrough) {
         $target = New-Object System.IO.FileStream($devicePath,
             [System.IO.FileMode]::Open, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
         $buffer = New-Object byte[] $bufferSize
+        $zero = New-Object byte[] $bufferSize
+        $processed = 0L
         $written = 0L
         $sw = [Diagnostics.Stopwatch]::StartNew()
         while ($true) {
             $read = $source.Read($buffer, 0, $bufferSize)
             if ($read -le 0) { break }
-            $target.Write($buffer, 0, $read)
-            $written += $read
+
+            # The image is mostly empty filesystem: a 20 GiB image carries
+            # about 1.3 GiB of real data. Writing the zeroes back costs ten
+            # minutes on a USB stick and changes nothing - the partition
+            # metadata that matters is non-zero and is written, and free space
+            # is free space. Clear-Disk above has already removed the old
+            # partition table, so nothing stale is left claiming the device.
+            $isZero = $false
+            if (-not $FullWrite -and $read -eq $bufferSize) {
+                # Compare against a zero buffer in one native call rather than
+                # looping in PowerShell, which would be slower than the write.
+                $isZero = [System.Linq.Enumerable]::SequenceEqual([byte[]]$buffer, [byte[]]$zero)
+            }
+
+            if ($isZero) {
+                $target.Seek($read, [System.IO.SeekOrigin]::Current) | Out-Null
+            } else {
+                $target.Write($buffer, 0, $read)
+                $written += $read
+            }
+            $processed += $read
+
             $mbps = 0
             if ($sw.Elapsed.TotalSeconds -gt 0) { $mbps = [int](($written/1MB)/$sw.Elapsed.TotalSeconds) }
             Write-Progress -Activity "Writing PenLive to disk $DiskNumber" `
-                -Status ("{0:N1} / {1:N1} GiB  -  {2} MB/s" -f ($written/1GB), ($imageBytes/1GB), $mbps) `
-                -PercentComplete ([int](($written/$imageBytes)*100))
+                -Status ("{0:N1} / {1:N1} GiB scanned - {2:N2} GiB written - {3} MB/s" -f `
+                    ($processed/1GB), ($imageBytes/1GB), ($written/1GB), $mbps) `
+                -PercentComplete ([int](($processed/$imageBytes)*100))
         }
+        # No SetLength here: a physical drive has a fixed size and rejects it.
+        # Seeking over trailing zeroes simply leaves those sectors untouched,
+        # which is the intent - the GPT backup header at the very end is
+        # non-zero and is therefore always written.
         $target.Flush($true)
         Write-Progress -Activity "Writing PenLive to disk $DiskNumber" -Completed
-        Good ("wrote {0:N1} GiB in {1:N0}s" -f ($written/1GB), $sw.Elapsed.TotalSeconds)
+        Good ("wrote {0:N2} GiB of {1:N1} GiB in {2:N0}s ({3:N1} GiB of zeroes skipped)" -f `
+            ($written/1GB), ($imageBytes/1GB), $sw.Elapsed.TotalSeconds, (($processed-$written)/1GB))
     } catch {
         Fail "write failed: $($_.Exception.Message)"
     } finally {
@@ -485,11 +535,23 @@ if (-not $usedPassthrough) {
                 [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
             $bufA = New-Object byte[] $bufferSize
             $bufB = New-Object byte[] $bufferSize
+            $zeroBuf = New-Object byte[] $bufferSize
             $checked = 0L; $mismatch = $false
             while ($checked -lt $imageBytes) {
                 $want = [Math]::Min($bufferSize, $imageBytes - $checked)
                 $a = $source.Read($bufA, 0, $want)
                 if ($a -le 0) { break }
+
+                # Blocks that were skipped on write were never sent to the
+                # device, so reading them back proves nothing. Verifying them
+                # would also mean reading the entire 57 GiB, which costs as
+                # much as the write we just avoided.
+                if (-not $FullWrite -and $a -eq $bufferSize -and
+                    [System.Linq.Enumerable]::SequenceEqual([byte[]]$bufA, [byte[]]$zeroBuf)) {
+                    $target.Seek($a, [System.IO.SeekOrigin]::Current) | Out-Null
+                    $checked += $a
+                    continue
+                }
                 # Raw device reads can come back short; refill before comparing
                 # or the mismatch would be alignment, not corruption.
                 $b = 0

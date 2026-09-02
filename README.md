@@ -123,8 +123,15 @@ WSL/Debian if missing, builds inside it, and writes the stick.
 ```
 
 Where `wsl --mount --bare` is available the raw stick is handed to WSL and the
-same Linux installer runs against it, using the whole device. Otherwise it
-falls back to building an image and writing that from Windows.
+same Linux installer runs against it. Otherwise it falls back to building an
+image and writing that from Windows.
+
+Either way the stick ends up fully used. The image is sized to the device, and
+the writer skips all-zero regions — a 57 GiB image still carries only about
+1.3 GiB of real data, so writing it takes a couple of minutes rather than half
+an hour. As a backstop for images flashed by other means (Rufus, balenaEtcher,
+`dd`), PenLive also grows `PENDATA` to fill the device on the first boot after
+flashing.
 
 > Writing erases the entire disk. The script always requires you to type the
 > device path to confirm — not even `--yes` skips that — and refuses to write

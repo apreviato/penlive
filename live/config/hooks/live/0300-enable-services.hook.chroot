@@ -4,6 +4,9 @@
 set -e
 
 systemctl enable NetworkManager.service
+# Runs before the manager: grows PENDATA to fill the stick on the first boot
+# after an image was flashed to a larger device.
+systemctl enable penlive-expand.service
 systemctl enable penlive-daemon.service
 systemctl enable penlive-aria2.service
 systemctl enable penlive-api.service

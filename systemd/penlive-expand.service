@@ -1,0 +1,22 @@
+[Unit]
+Description=Expand PENDATA to fill the USB stick (first boot after flashing)
+Documentation=file:///opt/penlive/docs/BUILD.md
+DefaultDependencies=no
+After=local-fs-pre.target systemd-udev-settle.service
+Wants=systemd-udev-settle.service
+# Must finish before anything mounts /data or the manager starts, since the
+# partition is recreated and reformatted.
+Before=local-fs.target penlive-daemon.service penlive-api.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/opt/penlive/expand-data.sh
+# A stick that is already full-size exits 0 without doing anything, so this is
+# effectively a no-op on every boot after the first. A failure here must not
+# stop the system coming up: the manager still works on a smaller PENDATA.
+SuccessExitStatus=0
+TimeoutStartSec=300
+
+[Install]
+WantedBy=sysinit.target

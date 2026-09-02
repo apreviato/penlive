@@ -78,6 +78,31 @@ partition labelled exactly `persistence` containing `persistence.conf`. That
 name is live-boot's contract; renaming it silently breaks the overlay, which is
 why it kept its name when everything else was renamed to PenLive.
 
+### Filling the stick
+
+Partitioning a device directly uses all of it, but flashing a fixed-size image
+does not: a 20 GiB image on a 57 GB stick strands 37 GB that should be holding
+ISOs. Two mechanisms cover that.
+
+The Windows writer sizes the image to the target device, which is only
+affordable because it skips all-zero blocks — a 57 GiB image carries roughly
+1.3 GiB of real data, so the write is minutes rather than half an hour. Zero
+blocks are safe to skip: `Clear-Disk` has already removed the old partition
+table, filesystem free space is tracked in metadata that *is* written, and the
+GPT backup header at the very end is non-zero and therefore always written.
+`-FullWrite` forces every byte for anyone who wants the old contents
+overwritten.
+
+`penlive-expand.service` is the backstop, for images flashed by Rufus,
+balenaEtcher or `dd`. On boot it grows `PENDATA` to fill the device. Its
+trigger is deliberately narrow — a GPT whose backup header is not at the end of
+the device — which is true exactly once, right after flashing a
+smaller-than-device image, and false forever after it runs. It finds its own
+disk through the `PENSYS` label so it can never touch another drive, refuses if
+`PENDATA` already holds files, and recreates rather than resizes the partition
+because exfatprogs has no resize tool (acceptable only because `PENDATA` is
+empty at that point).
+
 ## Privilege separation
 
 ```
