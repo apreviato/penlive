@@ -98,12 +98,32 @@ Verifying the layout treats a *partial* chain as an error: a shim that cannot
 find `grubx64.efi` is worse than no shim, because the firmware launches it and
 then stops at a message the user cannot act on.
 
-This does not extend to booting downloaded systems. shim trusts Debian's and
-Microsoft's keys, so a kernel extracted from an Ubuntu or Fedora ISO is
-refused; chainloading those ISOs works, because their own bootloaders are
-signed. Debian's signed GRUB also has no `exfat` module, so chainloading from
-the exFAT PENDATA partition needs `--data-fs ext4`. MokManager ships on the
-ESP for anyone who wants to enrol other vendors' keys.
+Booting *downloaded* systems needs one more step. shim trusts Debian's and
+Microsoft's keys, so a kernel extracted from an Ubuntu or Fedora ISO - signed
+by Canonical or Red Hat - is refused. Rather than telling the user to give up
+on Secure Boot, PenLive uses the mechanism Secure Boot provides for exactly
+this: a machine owner key, enrolled once through MokManager, then used to
+counter-sign each extracted kernel.
+
+`sbsign` appends rather than replaces, so the vendor's signature survives and
+nothing is forged - the added claim is "the owner of this machine also vouches
+for this file", which is what a MOK is for. The kernel being vouched for came
+out of an ISO whose SHA-256 was checked against the vendor's own published
+checksum, so the trust is not blind.
+
+Enrolment deliberately stops at the firmware screen: MokManager demands
+physical presence, and that is the property that makes the mechanism worth
+anything. The API generates the confirmation code rather than letting the user
+choose it, because that screen runs before any keymap is loaded and reliably
+accepts only digits.
+
+The boot route refuses to schedule a boot that would be rejected, instead of
+writing a pending entry and letting the machine fail silently after a reboot -
+the user would see a flash, land back in the manager via the watchdog, and
+have nothing to go on.
+
+Debian's signed GRUB also has no `exfat` module, so chainloading an ISO from
+the exFAT PENDATA partition needs `--data-fs ext4`.
 
 ### Filling the stick
 

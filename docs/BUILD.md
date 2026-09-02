@@ -266,9 +266,26 @@ Debian's and Microsoft's keys:
 
 The `linux` method hands GRUB a kernel taken out of the ISO. Ubuntu's kernels
 are signed by Canonical and Fedora's by Red Hat, and shim trusts neither, so
-GRUB refuses to start them. There is no way around that short of enrolling
-those vendors' keys yourself with MokManager (`mmx64.efi`, shipped on the ESP
-for exactly this).
+GRUB refuses to start them.
+
+**PenLive solves this with a machine owner key.** In Settings there is a Secure
+Boot panel: enrol a key once, and every kernel PenLive extracts afterwards is
+counter-signed with it. `sbsign` appends a signature rather than replacing one,
+so the distribution's own signature stays intact - what is added is "the owner
+of this machine also vouches for this file", which is exactly what a MOK means.
+
+Enrolment takes one reboot:
+
+1. Settings -> Secure Boot -> **Enrol a key for this machine**.
+2. Write down the 8-digit code it shows. It is digits only because MokManager
+   runs before any keymap is loaded and reads a bare US layout, so letters
+   could be untypeable on the very screen that demands them.
+3. Reboot. A blue MokManager screen appears: **Enroll MOK** -> Continue -> Yes,
+   then type the code.
+4. It reboots again, and downloaded systems now boot with Secure Boot on.
+
+Until a key is enrolled, PenLive refuses to schedule such a boot with a clear
+message rather than letting the firmware fail silently after a reboot.
 
 One more limitation: Debian's signed GRUB has no `exfat` module, so
 chainloading an ISO stored on the exFAT `PENDATA` partition fails under Secure

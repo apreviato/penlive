@@ -229,6 +229,18 @@ body {
   color: var(--text-dim);
 }
 
+.muted {
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.error-text {
+  color: var(--danger);
+  font-size: 13px;
+  margin-top: 10px;
+}
+
 /* ---------- buttons ---------- */
 
 .btn {
@@ -970,4 +982,59 @@ select.input {
   .info-grid dd {
     margin-bottom: 10px;
   }
+}
+
+/* ---------- secure boot ---------- */
+
+.sb-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 10px;
+  line-height: 1.5;
+}
+
+.sb-row .badge {
+  flex: none;
+  margin-top: 2px;
+}
+
+.badge-sb-ok {
+  color: var(--success);
+  border-color: #24503f;
+  background: #14261f;
+}
+
+.badge-sb-warn {
+  color: var(--warning);
+  border-color: #4a3c17;
+  background: #26200f;
+}
+
+.sb-enrolment {
+  margin-top: 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--border-hi);
+  border-radius: var(--radius);
+  background: var(--surface-alt);
+}
+
+/* Read off this screen and typed on the firmware's, so it is large and
+   monospaced to keep 0/O and 1/l distinguishable. */
+.sb-password {
+  font-family: ui-monospace, 'Cascadia Code', 'DejaVu Sans Mono', monospace;
+  font-size: 30px;
+  letter-spacing: 7px;
+  text-align: center;
+  padding: 13px;
+  margin: 13px 0;
+  border-radius: var(--radius);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--accent);
+}
+
+.sb-steps {
+  margin: 10px 0 0 18px;
+  line-height: 1.8;
 }

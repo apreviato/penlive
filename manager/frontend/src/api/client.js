@@ -28,6 +28,10 @@ export const api = {
   setupState: () => request('/api/setup/state'),
   completeSetup: () => request('/api/setup/complete', { method: 'POST' }),
 
+  // secure boot
+  secureBootState: () => request('/api/system/secureboot'),
+  enrolSecureBootKey: () => request('/api/system/secureboot/enrol', { method: 'POST' }),
+
   // network
   networkStatus: () => request('/api/network/status'),
   scanWifi: () => request('/api/network/wifi'),

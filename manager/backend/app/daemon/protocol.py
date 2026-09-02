@@ -31,6 +31,10 @@ ALLOWED_COMMANDS = {
     "run_operation",
     "list_operations",
     "set_keyboard",
+    # Secure Boot. `sign_kernel` only ever signs a file inside the extracted
+    # boot cache with the machine's own key - it cannot be pointed elsewhere.
+    "mok_setup",
+    "sign_kernel",
 }
 
 

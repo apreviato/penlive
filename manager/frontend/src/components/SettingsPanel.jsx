@@ -1,6 +1,7 @@
 import React from 'react';
 import { formatBytes, formatUptime } from '../format.js';
 import KeyboardPicker from './KeyboardPicker.jsx';
+import SecureBootPanel from './SecureBootPanel.jsx';
 import WifiPanel from './WifiPanel.jsx';
 
 export default function SettingsPanel({ sysinfo, network, onNetworkChanged, onKeyboardChanged }) {
@@ -11,6 +12,9 @@ export default function SettingsPanel({ sysinfo, network, onNetworkChanged, onKe
 
       <h2 className="section-title">Keyboard</h2>
       <KeyboardPicker onChanged={onKeyboardChanged} />
+
+      <h2 className="section-title">Secure Boot</h2>
+      <SecureBootPanel />
 
       <h2 className="section-title">System</h2>
       <div className="card">

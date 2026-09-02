@@ -27,7 +27,7 @@ UEFI → GRUB → Debian Live (SquashFS + OverlayFS) → FastAPI + Chromium kios
 | First-run setup wizard (keyboard + network) | done |
 | Three-layer kiosk lockdown (VT, WM, browser) | done |
 | 8 tools: backup, restore, SMART, repair, recovery, provisioning | done |
-| Secure Boot (Microsoft-signed shim + Debian-signed GRUB) | done |
+| Secure Boot: signed boot chain + machine-owner-key signing for downloaded systems | done |
 | Windows / wimboot, A/B updates, legacy BIOS | **not implemented** — see [Scope](#scope-and-limits) |
 
 ## Quick start (development)
@@ -90,8 +90,8 @@ command line. See [docs/PLUGINS.md](docs/PLUGINS.md).
 make test
 ```
 
-193 tests: 39 in the builder (partitioning, safety guards, provisioning plans,
-the image path, GRUB module selection and the Secure Boot chain) and 154 in the
+205 tests: 39 in the builder (partitioning, safety guards, provisioning plans,
+the image path, GRUB module selection and the Secure Boot chain) and 166 in the
 backend (adapters against synthetic ISOs, GRUB
 menuentry generation, SHA-256 verification, the daemon protocol, adversarial
 validation of privileged arguments, the job runner, disk inventory, the HTTP
@@ -140,9 +140,11 @@ flashing.
 > to the disk the running system booted from.
 
 The stick boots with **Secure Boot enabled**: it ships Debian's
-Microsoft-signed shim and Debian-signed GRUB, so no key enrolment or firmware
-change is needed. Booting a *downloaded* system is a separate question —
-see [Secure Boot](docs/BUILD.md#secure-boot) for what still needs it off.
+Microsoft-signed shim and Debian-signed GRUB, so no firmware change is needed.
+Booting a *downloaded* system needs one extra step, because its kernel is
+signed by Canonical or Red Hat rather than Debian — enrol a machine owner key
+once from Settings, and PenLive counter-signs each kernel it extracts. See
+[Secure Boot](docs/BUILD.md#secure-boot).
 
 The manual steps, and how to test in QEMU before touching real hardware, are in
 [docs/BUILD.md](docs/BUILD.md).

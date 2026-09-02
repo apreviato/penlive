@@ -198,6 +198,81 @@ async def handle_set_keyboard(args: dict) -> dict:
     return {"persisted": True, "applied_to_session": applied_now}
 
 
+
+# ---------------------------------------------------------------- Secure Boot ----
+
+async def handle_mok_setup(args: dict) -> dict:
+    """Create a machine owner key and queue it for enrolment at the next boot.
+
+    Enrolment deliberately stops here: MokManager asks for this password at the
+    console on the next boot, and no amount of code on this side can or should
+    skip that. Physical presence is the whole point of the mechanism.
+    """
+    from ..services import secureboot as sb
+
+    password = args.get("password", "")
+    # MokManager reads a bare US keymap, so anything but digits risks being
+    # untypeable on the very screen where it is required.
+    if not (isinstance(password, str) and password.isdigit() and 8 <= len(password) <= 16):
+        raise ValueError("enrolment password must be 8-16 digits")
+
+    sb.MOK_DIR.mkdir(parents=True, exist_ok=True)
+    os.chmod(sb.MOK_DIR, 0o700)
+
+    if not sb.key_exists():
+        subprocess.run([
+            "openssl", "req", "-new", "-x509", "-newkey", "rsa:2048", "-nodes",
+            "-days", "3650", "-subj", sb.MOK_SUBJECT,
+            "-keyout", str(sb.MOK_KEY), "-out", str(sb.MOK_CRT),
+        ], capture_output=True, text=True, check=True)
+        os.chmod(sb.MOK_KEY, 0o600)
+        subprocess.run([
+            "openssl", "x509", "-in", str(sb.MOK_CRT),
+            "-outform", "DER", "-out", str(sb.MOK_DER),
+        ], capture_output=True, text=True, check=True)
+
+    # mokutil wants the password twice on stdin.
+    proc = subprocess.run(
+        ["mokutil", "--import", str(sb.MOK_DER)],
+        input=password + "\n" + password + "\n",
+        capture_output=True, text=True,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(f"mokutil --import failed: {proc.stderr.strip() or proc.stdout.strip()}")
+
+    return {"pending": True, "subject": sb.MOK_SUBJECT}
+
+
+async def handle_sign_kernel(args: dict) -> dict:
+    """Sign an extracted kernel with the machine owner key.
+
+    Confined to the extracted-boot cache: this must never become a way to sign
+    an arbitrary file on the system. sbsign appends, so the distribution's own
+    signature survives untouched.
+    """
+    from ..services import secureboot as sb
+    from .. import paths
+
+    target = Path(args.get("path", "")).resolve()
+    cache_root = paths.EXTRACTED_DIR.resolve()
+    if cache_root not in target.parents:
+        raise ValueError(f"refusing to sign {target}: outside {cache_root}")
+    if not target.is_file():
+        raise ValueError(f"no such file: {target}")
+    if not sb.key_exists():
+        raise RuntimeError("no machine owner key; run mok_setup first")
+
+    signed = target.with_suffix(target.suffix + ".signed")
+    proc = subprocess.run([
+        "sbsign", "--key", str(sb.MOK_KEY), "--cert", str(sb.MOK_CRT),
+        "--output", str(signed), str(target),
+    ], capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise RuntimeError(f"sbsign failed: {proc.stderr.strip()}")
+
+    signed.replace(target)
+    return {"signed": str(target)}
+
 HANDLERS = {
     "ping": handle_ping,
     "mount_image": handle_mount_image,
@@ -215,6 +290,8 @@ HANDLERS = {
     "run_operation": handle_run_operation,
     "list_operations": handle_list_operations,
     "set_keyboard": handle_set_keyboard,
+    "mok_setup": handle_mok_setup,
+    "sign_kernel": handle_sign_kernel,
 }
 
 

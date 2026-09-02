@@ -58,6 +58,10 @@ grub-efi-amd64-bin
 # stick boots on machines that ship with Secure Boot enabled.
 shim-signed
 grub-efi-amd64-signed
+# Machine owner key: lets PenLive counter-sign kernels extracted from other
+# distributions' ISOs, which shim would otherwise refuse under Secure Boot.
+sbsigntool
+mokutil
 grub-common
 kexec-tools
 
