@@ -151,6 +151,19 @@ if [[ ${EUID} -ne 0 ]]; then
     die "must run as root: sudo ./scripts/make-usb.sh"
 fi
 
+# WSL appends the entire Windows PATH after the Linux one, so `command -v npm`
+# happily resolves to C:\Program Files\nodejs\npm. The dependency check then
+# passes, Node is never installed inside Debian, and the build fails much later
+# inside CMD.EXE complaining that UNC paths are unsupported. Dropping the
+# Windows entries removes that whole class of confusion.
+if grep -qi microsoft /proc/version 2>/dev/null; then
+    _linux_path="$(printf '%s' "${PATH}" | tr ':' '\n' | grep -v '^/mnt/' | paste -sd: -)"
+    if [[ -n "${_linux_path}" ]]; then
+        export PATH="${_linux_path}"
+        log "${DIM}     running under WSL: Windows PATH entries ignored${RESET}"
+    fi
+fi
+
 # npm as root litters the repo with root-owned node_modules the user then can't
 # clean up, so drop back to the invoking account for that one step.
 RUN_AS_USER=()
@@ -173,13 +186,25 @@ declare -A PACKAGE_FOR=(
     [wipefs]=util-linux
     [partprobe]=parted
     [python3]=python3
+    [rsync]=rsync
+    # node as well as npm: npm alone can resolve to a Windows shim under WSL
+    # while the actual node binary is absent, which fails only at build time.
+    [node]=nodejs
     [npm]=npm
     [zstd]=zstd
 )
 
+# A command that resolves under /mnt/ is a Windows executable reached through
+# WSL interop, not something we can build with. Treat it as absent.
+have_linux_cmd() {
+    local resolved
+    resolved="$(command -v "$1" 2>/dev/null)" || return 1
+    [[ "${resolved}" != /mnt/* ]]
+}
+
 missing_pkgs=()
 for cmd in "${!PACKAGE_FOR[@]}"; do
-    if ! command -v "${cmd}" >/dev/null 2>&1; then
+    if ! have_linux_cmd "${cmd}"; then
         missing_pkgs+=("${PACKAGE_FOR[${cmd}]}")
         warn "missing: ${cmd} (package: ${PACKAGE_FOR[${cmd}]})"
     fi
@@ -217,6 +242,21 @@ fi
 # -------------------------------------------------------- 2. frontend ----
 
 step "Building the web interface"
+
+# Vite 8 requires Node ^20.19 || >=22.12. Debian trixie ships 20.19.x, which
+# just qualifies; an older base would otherwise fail deep inside the bundler
+# with an error that says nothing about Node.
+node_version="$(node --version 2>/dev/null | sed 's/^v//')"
+if [[ -n "${node_version}" ]]; then
+    node_major="${node_version%%.*}"
+    node_rest="${node_version#*.}"
+    node_minor="${node_rest%%.*}"
+    if (( node_major < 20 )) || { (( node_major == 20 )) && (( node_minor < 19 )); }; then
+        die "Node ${node_version} is too old to build the interface (need 20.19+ or 22.12+).
+     Install a newer Node, e.g. from https://deb.nodesource.com, then re-run."
+    fi
+    ok "node ${node_version}"
+fi
 
 if [[ -d "${FRONTEND_DIST}" ]] && [[ -n "$(ls -A "${FRONTEND_DIST}" 2>/dev/null)" ]]; then
     ok "already built at manager/frontend/dist"

@@ -93,6 +93,14 @@ Arquivos `.img.zst` precisam de `zstd.exe` no PATH
 > de build — não tem apt nem systemd — e o script o ignora explicitamente em vez
 > de falhar 30 minutos depois.
 
+> **Interop do WSL.** O WSL acrescenta todo o PATH do Windows ao do Linux, então
+> um `command -v npm` dentro do Debian pode encontrar
+> `C:\Program Files\nodejs\npm`. A verificação de dependências passaria, o Node
+> nunca seria instalado no Debian, e o build quebraria bem mais tarde dentro do
+> `CMD.EXE` reclamando que caminhos UNC não são suportados. O script remove as
+> entradas `/mnt/` do PATH e trata qualquer binário que resolva em `/mnt/` como
+> ausente.
+
 > Se o WSL acabou de ser habilitado, o Windows precisa reiniciar antes de
 > instalar distribuições. O script detecta isso e avisa em vez de falhar de
 > forma obscura.
