@@ -233,8 +233,52 @@ python tools/update_catalog.py --write
 
 ## Common problems
 
-**GRUB does not appear / the machine ignores the stick** — Secure Boot must be
-disabled (not supported yet). Confirm the boot is UEFI, not legacy.
+**GRUB does not appear / the machine ignores the stick** — almost always Secure
+Boot. This is the single most common failure, and it looks like the firmware is
+simply skipping the stick: you select it in the boot menu and the machine
+carries on to the next device without a word.
+
+Reproduced under OVMF with Microsoft's keys enrolled, which is how a machine
+ships from the factory:
+
+```
+BdsDxe: loading Boot0001 "UEFI Misc Device" from PciRoot(0x0)/Pci(0x3,0x0)
+BdsDxe: failed to load Boot0001 "UEFI Misc Device" ... : Access Denied
+BdsDxe: No bootable option or device was found.
+```
+
+PenLive builds its own GRUB with `grub-mkstandalone`, so `BOOTX64.EFI` carries
+no signature Secure Boot will accept, and the firmware refuses to execute it.
+Nothing about the stick is wrong — the same image boots all the way to the
+kiosk once Secure Boot is off.
+
+To fix it, in the firmware setup (usually F2, Del or F10 at power-on):
+
+1. Find **Secure Boot** — often under Security, Boot, or Authentication.
+2. Set it to **Disabled**. Some firmware requires setting an administrator
+   password first, or switching *OS Type* from "Windows UEFI" to "Other OS".
+3. While there, confirm **UEFI** boot is enabled and CSM/Legacy is off — a
+   GPT/ESP stick is invisible to a machine booting in legacy mode.
+4. Save and exit, then pick the USB device from the boot menu (F12, F10, Esc
+   or F9 depending on vendor).
+
+Signing the bootloader so Secure Boot accepts it needs a Microsoft-signed shim
+and a signing chain in the builder; it is deliberately out of scope for now
+(see ARCHITECTURE.md, "What was not done, and why").
+
+**The stick boots in QEMU but not on hardware** — the image is fine; the
+difference is firmware policy. Check Secure Boot and CSM as above. To confirm
+the image independently:
+
+```bash
+sudo qemu-system-x86_64 -machine q35 -m 2048 \
+    -drive if=pflash,format=raw,unit=0,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
+    -drive if=pflash,format=raw,unit=1,file=/tmp/OVMF_VARS.fd \
+    -drive file=dist/penlive-amd64.img,format=raw,if=virtio
+```
+
+(copy `/usr/share/OVMF/OVMF_VARS_4M.fd` to `/tmp/OVMF_VARS.fd` first — pflash
+needs a writable file).
 
 **GRUB opens but cannot find the kernel** — the `PENSYS` label did not match.
 `sudo blkid /dev/sdb2` should show `LABEL="PENSYS"`.

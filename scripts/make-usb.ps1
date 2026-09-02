@@ -625,7 +625,11 @@ Say "    1. Leave the stick plugged in and restart the machine"
 Say "    2. Open the firmware boot menu (usually F12, F10, Esc or Del)"
 Say "    3. Choose the USB device"
 Say ""
-Write-Host "  Secure Boot must be disabled - it is not supported yet." -Foreground Yellow
+Write-Host "  Secure Boot must be disabled." -Foreground Yellow
+Say "  PenLive builds its own GRUB, so it carries no signature Secure Boot"
+Say "  accepts. With it on the firmware skips the stick silently - you pick it"
+Say "  in the boot menu and the machine just moves on. Disable Secure Boot in"
+Say "  firmware setup (under Security or Boot), and confirm CSM/Legacy is off."
 Say "  First boot asks for keyboard layout and Wi-Fi, then shows the catalog."
 Say ""
 if (-not $usedPassthrough -and -not $FlashOnly) {
