@@ -4,10 +4,13 @@
     "are the only pages the kiosk browser can reach at all. This is the layer",
     "that keeps the manager on screen: even when a shortcut slips past Openbox,",
     "Ctrl+J, Ctrl+H, Ctrl+U, F12 and view-source have nowhere to navigate to.",
-    "If loading.html ever moves, this allowlist entry has to move with it or the",
-    "kiosk will boot to a blocked page. The directory is allowed alongside the",
-    "exact URL purely as a hedge: nothing under /opt/penlive is secret, and the",
-    "cost of getting the file:// match wrong is a stick that boots to nothing."
+    "file:// is deliberately NOT blocked here. The boot splash is a file:// page,",
+    "so a blocklist entry for it puts the one thing that has to load on the wrong",
+    "side of a rule -- and a mis-scoped match there means a stick that boots to a",
+    "blocked page with no way out. The file:// escape is closed where it cannot",
+    "cost a boot instead: AllowFileSelectionDialogs below kills the open dialog,",
+    "Openbox grabs Ctrl+O, kiosk.js blocks drag-and-drop, and kiosk mode has no",
+    "address bar to type a path into."
   ],
   "URLAllowlist": [
     "http://127.0.0.1:7777",
@@ -21,7 +24,6 @@
     "chrome-extension://*",
     "devtools://*",
     "view-source:*",
-    "file://*",
     "ftp://*"
   ],
 

@@ -364,3 +364,143 @@ async def test_network_status_collapses_duplicate_lookups(monkeypatch):
 
     # ...and the cache is short enough that the status bar still tracks reality.
     assert network._STATUS_TTL_SECONDS <= 5
+
+
+# ---- downloads that stalled, froze the app, or died after a cancel -----------
+
+TORRENT_ENTRY = {
+    "id": "kali-live",
+    "name": "Kali Live",
+    "family": "kali",
+    "sources": [{"url": "https://example.invalid/kali-linux-2026.2-live-amd64.iso.torrent"}],
+    "sha256": None,
+    "size": 4242,
+    "capabilities": {"nativeBoot": True, "mount": True, "vm": True},
+}
+
+
+@pytest.mark.asyncio
+async def test_cancel_clears_the_partial_a_torrent_actually_staged(staged, monkeypatch):
+    """Cancel used to assume every download was staged as "<image_id>.iso".
+
+    A torrent keeps the name from its own metadata, so the partial file and its
+    .aria2 control file both survived the cancel — and the next Download
+    resumed the transfer the user had just stopped.
+    """
+    from app.services import aria2
+
+    monkeypatch.setattr(aria2, "remove", lambda gid: _async(None))
+    monkeypatch.setattr(aria2, "remove_download_result", lambda gid: _async(None))
+
+    repo.upsert_image_from_catalog(TORRENT_ENTRY)
+    repo.create_download("kali-live", "gid-torrent", 4242)
+    part = paths.DOWNLOADS_TMP_DIR / "kali-linux-2026.2-live-amd64.iso"
+    part.write_bytes(b"partial torrent payload")
+    control = paths.DOWNLOADS_TMP_DIR / "kali-linux-2026.2-live-amd64.iso.aria2"
+    control.write_bytes(b"aria2 control")
+
+    await downloader.cancel("kali-live")
+
+    assert not part.exists()
+    assert not control.exists()
+
+
+@pytest.mark.asyncio
+async def test_cancel_waits_for_its_watcher_before_returning(staged, monkeypatch):
+    """An unawaited cancelled watcher runs its finally clause whenever it likes.
+
+    If the user pressed Download again first, that clause evicted the *new*
+    watcher from _active, leaving a live download nothing was observing and
+    cancel() could no longer stop — every download after a cancelled one looked
+    dead.
+    """
+    import asyncio
+
+    from app.services import aria2
+
+    monkeypatch.setattr(aria2, "remove", lambda gid: _async(None))
+    monkeypatch.setattr(aria2, "remove_download_result", lambda gid: _async(None))
+
+    started = asyncio.Event()
+
+    async def never_ending():
+        started.set()
+        await asyncio.sleep(3600)
+
+    task = asyncio.create_task(never_ending())
+    downloader._active["debian-13-live-standard"] = task
+    await started.wait()
+
+    await downloader.cancel("debian-13-live-standard")
+
+    assert task.done(), "cancel returned while its watcher was still alive"
+    assert "debian-13-live-standard" not in downloader._active
+
+
+@pytest.mark.asyncio
+async def test_resume_keeps_asking_until_aria2_answers(staged, monkeypatch):
+    """aria2 is ordered before the API only by Type=exec, which says nothing
+    about its RPC port being bound. One failed call used to end the matter for
+    the life of the process, so a download resumed after a reboot sat at the
+    percentage it held when the machine went down."""
+    import asyncio
+
+    from app.services import aria2
+
+    monkeypatch.setattr(downloader, "RESUME_RETRY_SECONDS", 0)
+    monkeypatch.setattr(paths, "OFFLINE", False)
+
+    attempts = {"n": 0}
+    watched: list[tuple] = []
+
+    async def tell_active():
+        attempts["n"] += 1
+        if attempts["n"] < 3:
+            raise aria2.Aria2Unavailable("aria2 is not up yet")
+        return [{"gid": "gid1", "files": [{"path": str(staged["part"])}]}]
+
+    monkeypatch.setattr(aria2, "tell_active", tell_active)
+    monkeypatch.setattr(aria2, "tell_waiting", lambda: _async([]))
+
+    async def fake_watch(image_id, row_id, gid, sha):
+        watched.append((image_id, gid))
+
+    monkeypatch.setattr(downloader, "_watch", fake_watch)
+
+    await downloader._resume_watchers_when_aria2_answers()
+    await asyncio.sleep(0)
+
+    assert attempts["n"] == 3, "gave up before aria2 was ready"
+    assert watched == [("debian-13-live-standard", "gid1")]
+
+
+@pytest.mark.asyncio
+async def test_resume_matches_by_path_when_aria2_hands_back_a_new_gid(staged, monkeypatch):
+    """aria2 restores unfinished transfers from its session file, and the gid it
+    gives them back is not guaranteed to be the one we stored. Matching on gid
+    alone abandoned a download that was running perfectly well."""
+    import asyncio
+
+    from app.services import aria2
+
+    monkeypatch.setattr(downloader, "RESUME_RETRY_SECONDS", 0)
+    monkeypatch.setattr(paths, "OFFLINE", False)
+
+    watched: list[tuple] = []
+    monkeypatch.setattr(
+        aria2, "tell_active",
+        lambda: _async([{"gid": "gid-after-restart", "files": [{"path": str(staged["part"])}]}]),
+    )
+    monkeypatch.setattr(aria2, "tell_waiting", lambda: _async([]))
+
+    async def fake_watch(image_id, row_id, gid, sha):
+        watched.append((image_id, gid))
+
+    monkeypatch.setattr(downloader, "_watch", fake_watch)
+
+    await downloader._resume_watchers_when_aria2_answers()
+    await asyncio.sleep(0)
+
+    assert watched == [("debian-13-live-standard", "gid-after-restart")]
+    # The row has to learn the new gid, or the next restart repeats the problem.
+    assert repo.latest_download_for_image("debian-13-live-standard")["gid"] == "gid-after-restart"

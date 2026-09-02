@@ -264,7 +264,34 @@ async def handle_remount_boot_rw(args: dict) -> dict:
     return {"remounted": target}
 
 
+def _release_penlive_mounts() -> None:
+    """Unmount everything PenLive mounted, before handing over to systemd.
+
+    Loop-mounted ISOs and user drives under /run/penlive are not listed in
+    fstab, so systemd tears them down late and, if anything still holds a file
+    open, retries until it times out. The kiosk is already gone by then, so the
+    user sees a bare screen and assumes the machine has hung rather than that it
+    is shutting down. Lazy unmounts detach them immediately; the kernel finishes
+    when the last reference goes.
+    """
+    for root in (paths.MOUNTS_DIR, DRIVE_MOUNTS):
+        try:
+            entries = sorted(root.iterdir())
+        except OSError:
+            continue
+        for mountpoint in entries:
+            if not mountpoint.is_dir():
+                continue
+            # Best effort by definition: a path that was never mounted, or that
+            # something else already released, must not stop the shutdown.
+            subprocess.run(
+                ["umount", "-l", str(mountpoint)],
+                capture_output=True, check=False, timeout=10,
+            )
+
+
 async def handle_reboot(args: dict) -> dict:
+    _release_penlive_mounts()
     subprocess.Popen(["systemctl", "reboot"])
     return {"rebooting": True}
 
@@ -294,6 +321,7 @@ async def handle_write_usb(args: dict) -> dict:
 
 
 async def handle_poweroff(args: dict) -> dict:
+    _release_penlive_mounts()
     subprocess.Popen(["systemctl", "poweroff"])
     return {"powering_off": True}
 

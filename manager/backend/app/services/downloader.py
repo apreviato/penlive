@@ -24,6 +24,8 @@ from .inspector import process_downloaded_image
 log = logging.getLogger("penlive.downloader")
 
 POLL_INTERVAL_SECONDS = 1.0
+RESUME_RETRY_SECONDS = 5
+RESUME_MAX_ATTEMPTS = 60  # give aria2 five minutes to come up
 _active: dict[str, asyncio.Task] = {}
 
 
@@ -160,16 +162,32 @@ async def _watch(image_id: str, download_row_id: int, gid: str, expected_sha256:
             state = st.get("status")
 
             if state == "error":
-                repo.set_image_status(image_id, "not_downloaded")
-                repo.finish_download(download_row_id, state="error", error=st.get("errorMessage"))
+                await asyncio.to_thread(repo.set_image_status, image_id, "not_downloaded")
+                await asyncio.to_thread(
+                    repo.finish_download, download_row_id, state="error", error=st.get("errorMessage")
+                )
                 return
 
             if state == "complete":
-                repo.update_download_progress(download_row_id, progress_bytes=completed, speed_bps=0, state="verifying")
+                await asyncio.to_thread(
+                    repo.update_download_progress,
+                    download_row_id, progress_bytes=completed, speed_bps=0, state="verifying",
+                )
                 await _finalize(image_id, download_row_id, st, expected_sha256)
                 return
 
-            repo.update_download_progress(download_row_id, progress_bytes=completed, speed_bps=speed)
+            # sqlite writes go to a worker thread on purpose. db.py sets
+            # busy_timeout=30000, so a write that collides with a longer
+            # transaction elsewhere (post-download inspection, a catalog
+            # refresh, an ISO rescan) blocks its caller for up to thirty
+            # seconds. Called straight from the event loop -- once a second,
+            # per download -- that stalls every request and every other
+            # watcher at the same time, which is what "the whole app froze"
+            # looked like once a second download was running.
+            await asyncio.to_thread(
+                repo.update_download_progress,
+                download_row_id, progress_bytes=completed, speed_bps=speed,
+            )
             await asyncio.sleep(POLL_INTERVAL_SECONDS)
     except asyncio.CancelledError:
         raise
@@ -178,7 +196,12 @@ async def _watch(image_id: str, download_row_id: int, gid: str, expected_sha256:
         repo.finish_download(download_row_id, state="error", error=str(exc))
         repo.set_image_status(image_id, "not_downloaded")
     finally:
-        _active.pop(image_id, None)
+        # Only clear the slot if it is still ours. A cancelled watcher that ran
+        # its finally clause late used to evict whatever start() had registered
+        # in the meantime, leaving a live download that nothing was watching and
+        # that cancel() could no longer find.
+        if _active.get(image_id) is asyncio.current_task():
+            del _active[image_id]
 
 
 async def _finalize(image_id: str, download_row_id: int, aria2_status: dict, expected_sha256: str | None) -> None:
@@ -242,6 +265,7 @@ def _looks_complete(path: Path, expected_sha256: str | None, expected_size: int 
 
 
 async def cancel(image_id: str) -> None:
+    image = repo.get_image(image_id)
     row = repo.latest_download_for_image(image_id)
 
     # Stop the watcher first. Left running it would keep polling the gid we are
@@ -249,6 +273,15 @@ async def cancel(image_id: str) -> None:
     task = _active.pop(image_id, None)
     if task:
         task.cancel()
+        # ...and wait for it to actually be gone. Cancellation is a request,
+        # not an event: an unawaited watcher stays inside its current poll, and
+        # then writes its own terminal state over the "cancelled" one set
+        # below. It is also still holding a finally clause that clears
+        # _active -- so if the user pressed Download again in the meantime, it
+        # would evict the new watcher and leave a running download that nothing
+        # observes and cancel() can no longer stop. That is what made every
+        # download after a cancelled one look dead.
+        await asyncio.wait({task})
 
     gid = row.get("gid") if row else None
     if gid:
@@ -267,7 +300,12 @@ async def cancel(image_id: str) -> None:
     # partial file has to go or the next Download adopts it as a resume.
     if row:
         repo.finish_download(row["id"], state="cancelled")
-    staged_path = paths.DOWNLOADS_TMP_DIR / f"{image_id}.iso"
+    # Must match what start() staged. Hard-coding "<image_id>.iso" here missed
+    # every torrent download -- those keep the name from the torrent's own
+    # metadata -- so the partial file and its .aria2 control file survived the
+    # cancel, and the next attempt resumed a transfer the user had just stopped.
+    out_name = _output_name(image) if image else f"{image_id}.iso"
+    staged_path = paths.DOWNLOADS_TMP_DIR / out_name
     staged_path.unlink(missing_ok=True)
     Path(f"{staged_path}.aria2").unlink(missing_ok=True)
 
@@ -275,29 +313,89 @@ async def cancel(image_id: str) -> None:
 
 
 async def resume_watchers() -> None:
-    """Re-attach watcher tasks on API startup to whatever aria2 is still running.
+    """Re-attach watcher tasks to whatever aria2 is still running.
 
     aria2c is a separate systemd service, so a download started before an API
-    restart (or crash) keeps progressing — without this, we'd just never
-    notice it finished.
+    restart (or a reboot) keeps progressing — without this we would never
+    notice it advancing, let alone finishing.
+
+    Deliberately fire-and-forget, and deliberately persistent. This runs from
+    the API's lifespan, so anything awaited here delays the port opening and
+    the kiosk's first paint behind it. And the previous single attempt was
+    routinely too early: penlive-aria2.service is only ordered before us by
+    Type=exec, which says nothing about its RPC port being bound. One failed
+    call used to end the matter for the life of the process, which is why a
+    download resumed after a reboot sat at the percentage it had when the
+    machine went down while aria2 downloaded away underneath it.
     """
     if paths.OFFLINE:
         log.info("PENLIVE_OFFLINE set; skipping download-watcher resume")
         return
-    try:
-        active, waiting = await asyncio.gather(aria2.tell_active(), aria2.tell_waiting())
-    except aria2.Aria2Error:
-        log.info("aria2 RPC not reachable at startup; skipping download-watcher resume")
-        return
+    asyncio.create_task(_resume_watchers_when_aria2_answers())
 
-    for st in [*active, *waiting]:
-        gid = st.get("gid")
-        row = repo.find_download_by_gid(gid) if gid else None
-        if not row or row["image_id"] in _active:
+
+async def _resume_watchers_when_aria2_answers() -> None:
+    for attempt in range(RESUME_MAX_ATTEMPTS):
+        try:
+            active, waiting = await asyncio.gather(aria2.tell_active(), aria2.tell_waiting())
+        except aria2.Aria2Error:
+            if attempt == 0:
+                log.info("aria2 RPC not up yet; will keep trying to re-attach download watchers")
+            await asyncio.sleep(RESUME_RETRY_SECONDS)
             continue
-        image = repo.get_image(row["image_id"])
-        expected_sha256 = image.get("sha256") if image else None
-        log.info("resuming download watcher for %s (gid=%s)", row["image_id"], gid)
-        _active[row["image_id"]] = asyncio.create_task(
-            _watch(row["image_id"], row["id"], gid, expected_sha256)
-        )
+        plans = await asyncio.to_thread(_plan_reattach, [*active, *waiting])
+        for image_id, row_id, gid, expected_sha256 in plans:
+            log.info("resuming download watcher for %s (gid=%s)", image_id, gid)
+            _active[image_id] = asyncio.create_task(
+                _watch(image_id, row_id, gid, expected_sha256)
+            )
+        return
+    log.warning(
+        "aria2 never answered; downloads already in flight will not report progress "
+        "until the manager is restarted"
+    )
+
+
+def _plan_reattach(states: list[dict]) -> list[tuple[str, int, str, str | None]]:
+    """Match aria2's live transfers to the rows the UI is still showing.
+
+    Returns plans rather than starting the watchers: this runs in a worker
+    thread (the sqlite reads below can block on another writer), and there is
+    no event loop there to create tasks on.
+    """
+    plans: list[tuple[str, int, str, str | None]] = []
+    by_gid = {st["gid"]: st for st in states if st.get("gid")}
+    by_path: dict[str, dict] = {}
+    for st in states:
+        files = st.get("files") or []
+        path = files[0].get("path") if files else None
+        if path:
+            by_path[path] = st
+
+    for row in repo.unfinished_downloads():
+        image_id = row["image_id"]
+        existing = _active.get(image_id)
+        if existing is not None and not existing.done():
+            continue
+        image = repo.get_image(image_id)
+        if image is None:
+            continue
+
+        state = by_gid.get(row.get("gid"))
+        if state is None:
+            # aria2 restores unfinished transfers from its session file, and the
+            # gid it hands them back is not guaranteed to be the one we stored.
+            # The staged path is stable across that, so match on it instead of
+            # abandoning a download that is running perfectly well.
+            state = by_path.get(str(paths.DOWNLOADS_TMP_DIR / _output_name(image)))
+        if state is None:
+            continue
+
+        gid = state["gid"]
+        if gid != row.get("gid"):
+            log.info("download %s came back under a new aria2 gid %s", image_id, gid)
+            repo.set_download_gid(row["id"], gid)
+
+        plans.append((image_id, row["id"], gid, image.get("sha256")))
+
+    return plans

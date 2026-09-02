@@ -37,6 +37,14 @@ ExecStart=/usr/bin/aria2c \
     --save-session-interval=30
 Restart=always
 RestartSec=2
+# aria2 asked to stop with transfers running can take a long time to wind its
+# connections down, and systemd's default is to wait 90 seconds before it
+# insists. Shutdown happens with the kiosk already gone, so that wait is 90
+# seconds of bare grey screen after the user pressed Shut down. Resuming is
+# what the .aria2 control files beside each partial file are for, so being
+# killed here costs nothing.
+TimeoutStopSec=10
+KillMode=mixed
 
 NoNewPrivileges=yes
 PrivateTmp=yes

@@ -33,6 +33,7 @@ export default function App() {
   const [notice, setNotice] = useState(null);
   const [fileTarget, setFileTarget] = useState(null);
   const [vmSession, setVmSession] = useState(null);
+  const [powering, setPowering] = useState(null);
 
   const openFiles = (target = { source: 'pendata' }) => {
     setFileTarget({ ...target, nonce: Date.now() });
@@ -117,13 +118,31 @@ export default function App() {
       confirmLabel: 'Shut down',
       danger: true,
       onConfirm: async () => {
+        // Shutting down takes X and the browser away before systemd is done, so
+        // without this the last thing the user sees is the app vanishing into a
+        // bare screen -- indistinguishable from the machine having hung.
+        setPowering('poweroff');
         try {
           await api.poweroff();
         } catch (err) {
+          setPowering(null);
           setNotice({ kind: 'info', title: 'Could not power off', message: err.message });
         }
       },
     });
+
+  if (powering) {
+    return (
+      <div className="loading-screen">
+        <div className="loading-mark"><PenLiveMark size={42} /></div>
+        <div className="loading-title">Shutting down</div>
+        <div className="loading-copy">
+          <span className="spinner" /> Unmounting drives and stopping downloads…
+        </div>
+        <div className="loading-copy">The screen goes blank when it is safe to unplug the stick.</div>
+      </div>
+    );
+  }
 
   if (phase === 'loading') {
     return (

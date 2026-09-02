@@ -162,13 +162,15 @@ def test_browser_policy_leaves_escape_shortcuts_nowhere_to_navigate():
         "file:///opt/penlive/loading.html",
         "file:///opt/penlive/",
     ]
-    for scheme in ("chrome://*", "devtools://*", "view-source:*", "file://*"):
+    for scheme in ("chrome://*", "devtools://*", "view-source:*"):
         assert scheme in policy["URLBlocklist"]
 
-    # The splash is a file:// page and the blocklist covers file://*, so the
-    # allowlist entry is the only thing that lets the kiosk boot at all.
+    # The boot splash is a file:// page, so blocking file:// would put the one
+    # page that must load behind a rule that can only ever fail closed -- a
+    # stick that boots to "blocked" with no way out. Ctrl+O is closed by
+    # AllowFileSelectionDialogs and by Openbox instead.
     assert 'LOADING_URL="file:///opt/penlive/loading.html"' in (KIOSK / "xsession.sh").read_text()
-    assert "file:///opt/penlive/loading.html" in policy["URLAllowlist"]
+    assert not any(entry.startswith("file://") for entry in policy["URLBlocklist"])
 
     assert policy["IncognitoModeAvailability"] == 1
     assert policy["DeveloperToolsAvailability"] == 2

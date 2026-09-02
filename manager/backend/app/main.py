@@ -17,6 +17,7 @@ from . import paths
 from .routers import (
     boot, downloads, files, images, jobs, mount, network, system, system_info, terminal, tools, vm,
 )
+from .services import aria2 as aria2_client
 from .services import catalog, downloader, keyboard, local_images
 
 log = logging.getLogger("penlive.api")
@@ -34,6 +35,9 @@ async def lifespan(app: FastAPI):
     await keyboard.apply_saved_layout()
     asyncio.create_task(_seed_catalog_and_scan_images())
     yield
+    # Release aria2's shared connection pool; the transfers themselves belong to
+    # the separate aria2 service and carry on regardless.
+    await aria2_client.aclose()
 
 
 async def _seed_catalog_and_scan_images() -> None:

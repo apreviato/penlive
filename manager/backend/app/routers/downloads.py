@@ -46,7 +46,10 @@ async def download_progress_ws(websocket: WebSocket, image_id: str):
     await websocket.accept()
     try:
         while True:
-            row = repo.latest_download_for_image(image_id)
+            # Off the event loop like the watcher's writes: db.py waits up to
+            # 30s for a busy database, and one card's poll must not be able to
+            # stall every other socket and request behind it.
+            row = await asyncio.to_thread(repo.latest_download_for_image, image_id)
             if row:
                 await websocket.send_json({
                     "image_id": image_id,

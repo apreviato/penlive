@@ -28,6 +28,12 @@ StandardOutput=journal
 ExecStart=/opt/penlive/kiosk.sh
 Restart=always
 RestartSec=3
+# X holding tty1 can be slow to release it, and the restart loop in
+# xsession.sh has to be torn down with it. Ten seconds is far longer than
+# either needs; the default 90 would be spent showing the user a blank
+# console while they wait for a machine they asked to power off.
+TimeoutStopSec=10
+KillMode=mixed
 
 [Install]
 WantedBy=multi-user.target

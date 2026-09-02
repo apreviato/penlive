@@ -19,6 +19,33 @@ from .. import paths
 
 _id_counter = itertools.count(1)
 
+# One client, not one per call. A watcher polls tellStatus once a second for the
+# whole life of a multi-gigabyte download, and a fresh AsyncClient per poll
+# means a fresh TCP connection per poll -- two concurrent downloads leave a
+# steady stream of sockets in TIME_WAIT on a machine that has no reason to be
+# opening any. Keyed on the running loop so a test that builds a second loop
+# gets its own client instead of one bound to a loop that has closed.
+_client: httpx.AsyncClient | None = None
+_client_loop: asyncio.AbstractEventLoop | None = None
+
+
+def _http() -> httpx.AsyncClient:
+    global _client, _client_loop
+    loop = asyncio.get_running_loop()
+    if _client is None or _client.is_closed or _client_loop is not loop:
+        _client = httpx.AsyncClient(timeout=15)
+        _client_loop = loop
+    return _client
+
+
+async def aclose() -> None:
+    """Release the shared connection pool (called from the API's lifespan)."""
+    global _client, _client_loop
+    if _client is not None and not _client.is_closed:
+        await _client.aclose()
+    _client = None
+    _client_loop = None
+
 STATUS_KEYS = ["gid", "status", "totalLength", "completedLength", "downloadSpeed", "errorMessage", "files"]
 
 
@@ -40,8 +67,7 @@ async def _call(method: str, params: list[Any]) -> Any:
     # cancelling a multi-gigabyte download or rejecting the next click.
     for attempt in range(5):
         try:
-            async with httpx.AsyncClient(timeout=15) as client:
-                resp = await client.post(paths.ARIA2_RPC_URL, json=payload)
+            resp = await _http().post(paths.ARIA2_RPC_URL, json=payload)
             resp.raise_for_status()
             break
         except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout) as exc:

@@ -143,6 +143,33 @@ def latest_download_for_image(image_id: str) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
+def set_download_gid(download_id: int, gid: str) -> None:
+    """Re-point a row at the gid aria2 is actually using.
+
+    aria2 restores unfinished transfers from its session file on restart, and
+    the gid it gives them is not guaranteed to be the one we stored. Without
+    this the row can never be matched again and its progress freezes at
+    whatever the last poll before the reboot wrote.
+    """
+    with transaction() as conn:
+        conn.execute("UPDATE downloads SET gid=? WHERE id=?", (gid, download_id))
+
+
+def unfinished_downloads() -> list[dict[str, Any]]:
+    """Rows the UI is still showing as in flight, newest first per image."""
+    rows = db().execute(
+        "SELECT * FROM downloads WHERE state IN ('queued', 'active', 'verifying') ORDER BY id DESC"
+    ).fetchall()
+    seen: set[str] = set()
+    latest: list[dict[str, Any]] = []
+    for row in rows:
+        if row["image_id"] in seen:
+            continue
+        seen.add(row["image_id"])
+        latest.append(dict(row))
+    return latest
+
+
 def find_download_by_gid(gid: str) -> dict[str, Any] | None:
     row = db().execute("SELECT * FROM downloads WHERE gid = ? ORDER BY id DESC LIMIT 1", (gid,)).fetchone()
     return dict(row) if row else None

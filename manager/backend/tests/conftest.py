@@ -22,3 +22,20 @@ def temp_db(tmp_path, monkeypatch):
     db.reset_for_tests()
     yield
     db.reset_for_tests()
+
+
+@pytest.fixture(autouse=True)
+def clear_download_watchers():
+    """downloader._active is module state that outlives a test.
+
+    Each async test gets its own event loop, so a watcher task left behind by
+    an earlier one belongs to a loop that has since been closed — and anything
+    that then waits on it raises "Event loop is closed" from whichever test
+    happens to run next. The manager itself has a single loop for the life of
+    the process, so this is purely a test-isolation concern.
+    """
+    from app.services import downloader
+
+    downloader._active.clear()
+    yield
+    downloader._active.clear()
