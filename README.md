@@ -1,38 +1,38 @@
 # PenLive
 
-Um pendrive que **é** um gerenciador de sistemas operacionais: liga o computador,
-conecta no Wi-Fi, escolhe um sistema de um catálogo, baixa, verifica e boota —
-sem precisar de um segundo computador, sem regravar o pendrive a cada ISO.
+A USB stick that **is** an operating-system manager: power on the machine,
+connect to Wi-Fi, pick a system from a catalog, download it, verify it and boot
+it — with no second computer, and without reflashing the stick for every ISO.
 
 ```
 UEFI → GRUB → Debian Live (SquashFS + OverlayFS) → FastAPI + Chromium kiosk
                                                         ↓
-                                          catálogo · download · boot · VM
+                                          catalog · download · boot · VM
 ```
 
-## O que já está implementado
+## What is implemented
 
-| Camada | Estado |
+| Layer | State |
 |---|---|
-| `penlive` CLI (particiona GPT, formata, instala GRUB, provisiona) | pronto, com `--dry-run` |
-| GRUB: boot manager, pending boot, watchdog de 3 tentativas, recovery | pronto |
-| Debian `live-build` (pacotes, hooks, systemd, kiosk) | pronto |
-| Backend FastAPI + SQLite | pronto |
-| Daemon privilegiado (socket Unix, comandos restritos) | pronto |
-| Download resumível via aria2 + verificação SHA-256 | pronto |
-| Adapters: Debian, Ubuntu, Fedora, Arch, Proxmox, EFI genérico | pronto |
-| Frontend React em modo kiosk (inglês) | pronto |
-| Boot nativo, Run VM (QEMU/KVM), Mount, Write-to-USB | pronto |
-| Barra de status estilo SO: IP, teclado, armazenamento, relógio | pronto |
-| Assistente de primeira execução (teclado + rede) | pronto |
-| Trava de kiosk em três camadas (VT, WM, navegador) | pronto |
-| 8 ferramentas: backup, restore, SMART, reparos, recuperação, provisionamento | pronto |
-| Windows / wimboot, update A/B, Secure Boot, BIOS legacy | **não implementado** — ver [Escopo](#escopo-e-limites) |
+| `penlive` CLI (GPT partitioning, formatting, GRUB install, provisioning) | done, with `--dry-run` |
+| GRUB: boot manager, pending boot, 3-attempt watchdog, recovery | done |
+| Debian `live-build` (packages, hooks, systemd, kiosk) | done |
+| FastAPI + SQLite backend | done |
+| Privileged daemon (Unix socket, fixed command set) | done |
+| Resumable downloads via aria2 + SHA-256 verification | done |
+| Adapters: Debian, Ubuntu, Fedora, Arch, Proxmox, generic EFI | done |
+| React kiosk frontend | done |
+| Native boot, Run VM (QEMU/KVM), Mount, Write-to-USB | done |
+| OS-style status bar: IP, keyboard, storage, clock | done |
+| First-run setup wizard (keyboard + network) | done |
+| Three-layer kiosk lockdown (VT, WM, browser) | done |
+| 8 tools: backup, restore, SMART, repair, recovery, provisioning | done |
+| Windows / wimboot, A/B updates, Secure Boot, legacy BIOS | **not implemented** — see [Scope](#scope-and-limits) |
 
-## Início rápido (desenvolvimento)
+## Quick start (development)
 
-Roda em qualquer SO — sem pendrive, sem root. O backend detecta que não está no
-sistema live e usa `./devdata/` no lugar das partições reais.
+Runs on any OS — no USB stick, no root. The backend detects that it is not on
+the live system and uses `./devdata/` instead of the real partitions.
 
 ```bash
 make backend-deps
@@ -46,10 +46,10 @@ cd manager/frontend && npm ci && npm run build
 cd manager/backend && PENLIVE_DEV=1 python -m uvicorn app.main:app --port 7777
 ```
 
-Abra <http://127.0.0.1:7777>. O catálogo carrega da cópia local em
-`catalog/catalog.json`; Wi-Fi, boot, mount e as ferramentas retornam `503`
-porque dependem do sistema live — a interface trata isso e continua utilizável,
-mostrando o motivo em cada caso.
+Open <http://127.0.0.1:7777>. The catalog loads from the local copy in
+`catalog/catalog.json`; Wi-Fi, boot, mount and the tools return `503` because
+they depend on the live system — the interface handles that and stays usable,
+naming the reason in each case.
 
 ## Interface
 
@@ -61,117 +61,121 @@ mostrando o motivo em cada caso.
 └──────────────────────────────────────────────────────────────┘
 ```
 
-Barra de status sempre visível com estado da conexão, IP, layout de teclado,
-espaço livre, relógio e desligar. Três abas: **Systems** (catálogo, download,
-boot, VM, mount), **Tools** (as 8 ferramentas) e **Settings** (rede, teclado,
-informações do sistema).
+A status bar is always visible with connection state, IP address, keyboard
+layout, free space, clock and shutdown. Three tabs: **Systems** (catalog,
+download, boot, VM, mount), **Tools** (the 8 tools) and **Settings** (network,
+keyboard, system information).
 
-Na primeira execução aparece um assistente de duas etapas — teclado, depois
-rede. Depois disso o boot vai direto para o catálogo, e o assistente só volta
-se a máquina estiver sem conexão.
+The first run shows a two-step wizard — keyboard, then network. After that,
+booting goes straight to the catalog, and the wizard only returns when the
+machine has no connection.
 
-## Ferramentas
+## Tools
 
 Backup · Restore · SMART · Filesystem Check & Repair · Linux Boot Repair ·
 Windows Repair · Deleted File Recovery · Provision Machine
 
-Todas gerenciadas pela interface, com console de saída ao vivo e cancelamento.
-Ações destrutivas exigem confirmação explícita, e as partições do próprio
-pendrive aparecem marcadas com `⚠ PenLive`.
+All driven from the interface, with a live output console and cancellation.
+Destructive actions require explicit confirmation, and the stick's own
+partitions are marked `⚠ PenLive`.
 
-Um plugin **não** consegue ampliar o que o sistema faz: ele produz o *nome* de
-uma operação mais argumentos estruturados, e quem monta a linha de comando é o
-daemon. Ver [docs/PLUGINS.md](docs/PLUGINS.md).
+A plugin **cannot** widen what the system is able to do: it produces the *name*
+of an operation plus structured arguments, and the daemon is what builds the
+command line. See [docs/PLUGINS.md](docs/PLUGINS.md).
 
-## Testes
+## Tests
 
 ```bash
 make test
 ```
 
-174 testes: 20 no builder (particionamento, guardas de segurança, plano de
-provisionamento) e 154 no backend (adapters contra ISOs sintéticas, geração de
-menuentry do GRUB, verificação SHA-256, protocolo do daemon, validação
-adversarial de argumentos privilegiados, runner de jobs, inventário de discos,
-API HTTP e schema do catálogo).
+182 tests: 28 in the builder (partitioning, safety guards, provisioning plans,
+the image path) and 154 in the backend (adapters against synthetic ISOs, GRUB
+menuentry generation, SHA-256 verification, the daemon protocol, adversarial
+validation of privileged arguments, the job runner, disk inventory, the HTTP
+API and the catalog schema).
 
-## Construir o pendrive de verdade
+## Building a real stick
 
-Precisa de um host **Debian/Ubuntu** e root. Um único comando guiado cuida de
-tudo — dependências, interface, sistema live, escolha do dispositivo e gravação:
+Needs a **Debian/Ubuntu** host and root. One guided command handles everything —
+dependencies, the interface, the live system, device selection and writing:
 
 ```bash
 sudo ./scripts/make-usb.sh
 ```
 
-Ele pergunta antes de cada passo irreversível, pula o que já está pronto (o
-build do sistema live leva 20-40 min e não precisa ser repetido para regravar
-um pendrive), e ajusta as partições sozinho em pendrives pequenos. No fim,
-valida o resultado e explica como bootar.
+It asks before every irreversible step, skips whatever is already built (the
+live system takes 20-40 minutes and does not need repeating to reflash a
+stick), and adjusts the partition sizes by itself on small sticks. At the end
+it validates the result and explains how to boot it.
 
-Regravar um segundo pendrive reaproveitando o build:
+Reflashing a second stick, reusing the existing build:
 
 ```bash
 sudo ./scripts/make-usb.sh --device /dev/sdb --skip-build
 ```
 
-**No Windows**, em um PowerShell como administrador — também faz tudo: instala
-o WSL/Debian se faltar, constrói lá dentro e grava o pendrive.
+**On Windows**, from an elevated PowerShell — it also does everything: installs
+WSL/Debian if missing, builds inside it, and writes the stick.
 
 ```powershell
 .\scripts\make-usb.ps1
 ```
 
-Quando o `wsl --mount --bare` está disponível, o pendrive cru é entregue ao WSL
-e o mesmo instalador Linux roda sobre ele, usando o pendrive inteiro. Caso
-contrário cai para gerar uma imagem e gravá-la pelo Windows.
+Where `wsl --mount --bare` is available the raw stick is handed to WSL and the
+same Linux installer runs against it, using the whole device. Otherwise it
+falls back to building an image and writing that from Windows.
 
-> A gravação apaga o disco inteiro. O script sempre exige que você digite o
-> caminho do dispositivo para confirmar — nem `--yes` pula essa etapa — e se
-> recusa a escrever no disco do sistema em execução.
+> Writing erases the entire disk. The script always requires you to type the
+> device path to confirm — not even `--yes` skips that — and refuses to write
+> to the disk the running system booted from.
 
-Os passos manuais, e como testar em QEMU antes de usar hardware real, estão em
+The manual steps, and how to test in QEMU before touching real hardware, are in
 [docs/BUILD.md](docs/BUILD.md).
 
-## Layout do pendrive
+## Stick layout
 
 ```
 GPT
-├── p1  PENEFI      FAT32   512M   EFI/BOOT/BOOTX64.EFI
-├── p2  PENSYS      ext4    4G     live/ (kernel, initrd, squashfs) + boot/state + boot/extracted
-├── p3  persistence  ext4    8G     OverlayFS (live-boot) — configurações, Wi-Fi
-└── p4  PENDATA     exFAT   resto  images/ (ISOs), catalog/, logs/
+├── p1  PENEFI       FAT32   512M   EFI/BOOT/BOOTX64.EFI
+├── p2  PENSYS       ext4    4G     live/ (kernel, initrd, squashfs) + boot/state + boot/extracted
+├── p3  persistence  ext4    8G     OverlayFS (live-boot) — settings, Wi-Fi
+└── p4  PENDATA      exFAT   rest   images/ (ISOs), catalog/, logs/
 ```
 
-ISOs ficam em `PENDATA`, **separadas** da persistência: resetar o sistema
-(factory reset) não apaga nenhum download. `PENDATA` é exFAT para que o
-pendrive possa ser usado em Windows/macOS para copiar ISOs manualmente.
+ISOs live on `PENDATA`, **separate** from persistence: a factory reset erases
+no downloads. `PENDATA` is exFAT so the stick can be plugged into
+Windows/macOS to copy ISOs onto it by hand.
 
-## Documentação
+The `persistence` label is not ours to choose — Debian live-boot scans for a
+partition with exactly that name.
 
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — decisões de design e o porquê de cada uma
-- [docs/BUILD.md](docs/BUILD.md) — construir, gravar e testar em QEMU
-- [docs/ADAPTERS.md](docs/ADAPTERS.md) — como funciona e como escrever um adapter
-- [docs/PLUGINS.md](docs/PLUGINS.md) — as ferramentas, o modelo de segurança e como adicionar uma
+## Documentation
 
-## Escopo e limites
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — design decisions and the reasoning behind each
+- [docs/BUILD.md](docs/BUILD.md) — building, writing and testing in QEMU
+- [docs/ADAPTERS.md](docs/ADAPTERS.md) — how boot adapters work and how to write one
+- [docs/PLUGINS.md](docs/PLUGINS.md) — the tools, the security model, and how to add one
 
-**Verificado nesta implementação:** testes automatizados, build do frontend, API
-rodando ponta a ponta com a interface clicada no navegador (assistente,
-catálogo, ferramentas, formulário de backup e console de job com streaming),
-plano de comandos do builder em dry-run, e os checksums do catálogo conferidos
-contra os arquivos oficiais de cada distribuição.
+## Scope and limits
 
-**Não verificado:** nada foi testado em hardware real nem em UEFI. O boot
-nativo, a persistência OverlayFS, o kiosk Chromium, a trava de terminais
-virtuais e os `cmdline` dos adapters precisam de validação em QEMU/hardware
-antes de qualquer uso sério — comece por [docs/BUILD.md](docs/BUILD.md), seção
-"Testar em QEMU".
+**Verified in this implementation:** the automated tests, the frontend build,
+the API running end to end with the interface driven in a browser (wizard,
+catalog, tools, the backup form and a streaming job console), the builder's
+command plan under `--dry-run`, and the catalog checksums re-derived from each
+distribution's own published checksum file.
 
-As ferramentas privilegiadas foram exercitadas contra um daemon simulado (a
-validação de argumentos e o runner de jobs têm testes próprios), mas nenhuma
-rodou contra discos reais. Antes de confiar em Backup/Restore/Provisioning,
-teste em discos descartáveis dentro de uma VM.
+**Not verified:** nothing has been tested on real hardware or UEFI. Native
+boot, OverlayFS persistence, the Chromium kiosk, the virtual-terminal lockdown
+and the adapter `cmdline` values all need validation in QEMU or on hardware
+before any serious use — start with [docs/BUILD.md](docs/BUILD.md), section
+"Testing in QEMU".
 
-**Fora do escopo por enquanto** (decisão consciente, na ordem sugerida):
-Windows via wimboot, updates A/B do próprio Manager, Secure Boot e BIOS legacy.
+The privileged tools were exercised against a simulated daemon (argument
+validation and the job runner have their own tests), but none has run against
+real disks. Before trusting Backup/Restore/Provisioning, try them on
+disposable disks inside a VM.
+
+**Out of scope for now** (a deliberate decision, in the suggested order):
+Windows via wimboot, A/B updates of the manager itself, Secure Boot, and
+legacy BIOS.

@@ -1,237 +1,268 @@
-# Arquitetura
+# Architecture
 
-Este documento registra **por que** cada decisão foi tomada. O código diz o que
-faz; aqui está o raciocínio que não sobrevive em comentários.
+This document records **why** each decision was made. The code says what it
+does; here is the reasoning that does not survive in comments.
 
-## Cadeia de boot
+## Boot chain
 
 ```
 UEFI
- └─ EFI/BOOT/BOOTX64.EFI          (GRUB standalone, na partição PENEFI)
+ └─ EFI/BOOT/BOOTX64.EFI          (standalone GRUB, on the PENEFI partition)
      └─ configfile → PENSYS/boot/grub/grub.cfg
-         ├─ menuentry "PenLive Manager"        (padrão)
-         ├─ source boot/state/nextboot.cfg       (se existir e attempts < 3)
-         └─ source boot/grub/recovery.cfg        (sempre)
+         ├─ menuentry "PenLive Manager"          (default)
+         ├─ source boot/state/nextboot.cfg       (if present and attempts < 3)
+         └─ source boot/grub/recovery.cfg        (always)
              └─ vmlinuz + initrd → live-boot
                  ├─ PENSYS/live/filesystem.squashfs   (read-only)
-                 └─ partição LABEL=persistence         (OverlayFS, gravável)
+                 └─ LABEL=persistence partition       (OverlayFS, writable)
                      └─ systemd
                          ├─ NetworkManager
-                         ├─ penlive-daemon   (root, socket Unix)
-                         ├─ penlive-aria2    (usuário penlive)
-                         ├─ penlive-api      (usuário penlive, :7777)
-                         └─ penlive-kiosk    (X + Chromium fullscreen)
+                         ├─ penlive-daemon   (root, Unix socket)
+                         ├─ penlive-aria2    (penlive user)
+                         ├─ penlive-api      (penlive user, :7777)
+                         └─ penlive-kiosk    (X + fullscreen Chromium)
 ```
 
-### Por que o GRUB embutido é mínimo
+### Why the embedded GRUB is minimal
 
-`grub-mkstandalone` gera um `BOOTX64.EFI` autossuficiente, mas regravá-lo é
-chato. Então o config embutido faz só duas coisas: achar a partição pelo label
-`PENSYS` e dar `configfile` no `grub.cfg` de verdade. Toda a lógica de menu
-vive num arquivo comum numa partição ext4 — atualizar o menu é sobrescrever um
-arquivo, não reconstruir o binário EFI.
+`grub-mkstandalone` produces a self-contained `BOOTX64.EFI`, but rewriting it is
+awkward. So the embedded config does only two things: find the partition by its
+`PENSYS` label and `configfile` into the real `grub.cfg`. All the menu logic
+lives in an ordinary file on an ext4 partition — updating the menu is
+overwriting a file, not rebuilding the EFI binary.
 
-### Watchdog de boot (o detalhe que evita "brickar")
+### The boot watchdog (what stops the stick bricking itself)
 
-O GRUB não tem operador de incremento nem `rm`. Isso moldou duas coisas:
+GRUB has no increment operator and no `rm`. That shaped two things:
 
-1. O contador `boot_attempts` sobe por uma cadeia `if/elif` explícita em
-   `grub.cfg`, não por `+= 1`. Chegando a 3, o pending boot é ignorado e o
-   Manager inicia normalmente. Um `cmdline` errado gerado por um adapter não
-   deixa o usuário preso num loop de boot.
-2. "Cancelar pending boot" pelo GRUB **não apaga** o arquivo — o GRUB não
-   consegue. Ele boota o Manager com `penlive.clear_pending=1` e quem apaga é
-   o daemon, já dentro do Linux.
+1. The `boot_attempts` counter rises through an explicit `if/elif` chain in
+   `grub.cfg`, not `+= 1`. On reaching 3, the pending boot is ignored and the
+   manager starts normally. A bad `cmdline` from an adapter cannot trap the
+   user in a boot loop.
+2. "Cancel pending boot" from GRUB **does not delete** the file — GRUB cannot.
+   It boots the manager with `penlive.clear_pending=1`, and the daemon deletes
+   it once Linux is running.
 
-`recovery.cfg` é sourced incondicionalmente **no fim** do `grub.cfg`, depois de
-toda a lógica de pending boot, justamente para continuar acessível se algo
-anterior falhar.
+`recovery.cfg` is sourced unconditionally **at the end** of `grub.cfg`, after
+all the pending-boot logic, precisely so it stays reachable if anything before
+it fails.
 
-## Partições
+## Partitions
 
-| # | Label | FS | Tamanho | Conteúdo |
+| # | Label | FS | Size | Contents |
 |---|---|---|---|---|
 | 1 | `PENEFI` | FAT32 | 512 M | `EFI/BOOT/BOOTX64.EFI` |
 | 2 | `PENSYS` | ext4 | 4 G | `live/` + `boot/state/` + `boot/extracted/` |
-| 3 | `persistence` | ext4 | 8 G | OverlayFS do live-boot |
-| 4 | `PENDATA` | exFAT | resto | `images/`, `catalog/`, `logs/` |
+| 3 | `persistence` | ext4 | 8 G | live-boot's OverlayFS |
+| 4 | `PENDATA` | exFAT | rest | `images/`, `catalog/`, `logs/` |
 
-Três decisões que valem explicação:
+Four decisions worth explaining:
 
-**`boot/state` fica em PENSYS (ext4), não em PENDATA (exFAT).** O GRUB lê o
-`nextboot.cfg` direto da partição crua, antes de existir Linux ou OverlayFS. O
-suporte a ext4 no GRUB é muito mais testado que o de exfat, e não vale arriscar
-a cadeia de boot inteira nisso.
+**`boot/state` lives on PENSYS (ext4), not PENDATA (exFAT).** GRUB reads
+`nextboot.cfg` straight off the raw partition, before Linux or OverlayFS
+exist. GRUB's ext4 support is far better tested than its exfat support, and the
+entire boot chain is not worth risking on that.
 
-**PENDATA é exFAT mesmo assim.** É a partição que o usuário enxerga ao plugar
-o pendrive em qualquer Windows/macOS/Linux para copiar uma ISO na mão. Nada que
-o GRUB precise ler no boot mora lá — exceto no método `chainload`, que é
-justamente por isso o único a dar `insmod exfat`.
+**PENDATA is exFAT anyway.** It is the partition a user sees when plugging the
+stick into any Windows/macOS/Linux machine to copy an ISO across by hand.
+Nothing GRUB must read at boot lives there — except in the `chainload` method,
+which is exactly why that is the only one doing `insmod exfat`.
 
-**ISOs ≠ persistência.** Downloads vão para `PENDATA`, estado do sistema vai
-para `persistence`. Um factory reset (formatar `persistence`, recriar
-`persistence.conf`) preserva todos os downloads. Se as ISOs morassem no overlay,
-resetar o sistema custaria dezenas de GB de re-download.
+**ISOs ≠ persistence.** Downloads go to `PENDATA`, system state to
+`persistence`. A factory reset (reformat `persistence`, recreate
+`persistence.conf`) preserves every download. If ISOs lived in the overlay,
+resetting the system would cost tens of GB of re-downloading.
 
-## Separação de privilégios
+**The `persistence` label is not ours to choose.** Debian live-boot scans for a
+partition labelled exactly `persistence` containing `persistence.conf`. That
+name is live-boot's contract; renaming it silently breaks the overlay, which is
+why it kept its name when everything else was renamed to PenLive.
+
+## Privilege separation
 
 ```
-Chromium kiosk  (usuário penlive)
+Chromium kiosk  (penlive user)
       │ HTTP localhost:7777
-penlive-api   (usuário penlive)  ← parseia entrada não-confiável
-      │ socket Unix, JSON por linha
-penlive-daemon (root)              ← lista fixa de comandos
+penlive-api     (penlive user)  ← parses untrusted input
+      │ Unix socket, JSON per line
+penlive-daemon  (root)          ← fixed command list
 ```
 
-A API é quem processa entrada não-confiável: JSON de catálogo remoto e o
-conteúdo interno de ISOs baixadas. Por isso ela **não** roda como root. Tudo que
-exige privilégio vai por um socket Unix para um daemon cuja superfície inteira é
-a lista em `app/daemon/protocol.py`:
+The API is what processes untrusted input: remote catalog JSON and the internal
+contents of downloaded ISOs. That is why it does **not** run as root. Anything
+needing privilege goes over a Unix socket to a daemon whose entire surface is
+the list in `app/daemon/protocol.py`:
 
 ```
 ping · mount_image · umount · write_nextboot · clear_nextboot
-reboot · kexec_boot · write_usb
+reboot · poweroff · kexec_boot · write_usb
+job_start · job_status · job_list · job_cancel
+run_operation · list_operations · set_keyboard
 ```
 
-O daemon nunca recebe um comando de shell; recebe um nome dessa lista e
-argumentos nomeados. Não existe caminho "executa esta string". A validação
-acontece nos dois lados — o cliente recusa um comando fora da lista antes mesmo
-de abrir o socket, e o servidor recusa de novo ao receber. Um teste garante que
-`ALLOWED_COMMANDS` e os handlers implementados não divirjam.
+The daemon never receives a shell command; it receives a name from that list
+and named arguments. There is no "execute this string" path. Validation happens
+on both sides — the client refuses a command outside the list before even
+opening the socket, and the server refuses again on receipt. A test guarantees
+that `ALLOWED_COMMANDS` and the implemented handlers cannot drift apart.
 
-`write_usb` reaproveita as guardas de `builder/penlive/safety.py` em vez de
-reimplementá-las: recusa nome de partição, recusa o disco do sistema em
-execução.
+`write_usb` reuses the guards in `builder/penlive/safety.py` rather than
+reimplementing them: it refuses partition names and refuses the disk the
+running system booted from.
 
-O mesmo princípio vale para as ferramentas (Tools): `job_start` recebe o *nome*
-de uma operação e argumentos estruturados; quem monta o argv é o daemon, em
-`daemon/operations.py`. Adicionar um plugin não amplia o que o sistema
-consegue fazer. Detalhes e o modelo de ameaça em [PLUGINS.md](PLUGINS.md).
+The same principle covers the Tools: `job_start` receives the *name* of an
+operation plus structured arguments, and the daemon builds the argv itself in
+`daemon/operations.py`. Adding a plugin does not widen what the system can do.
+Details and the threat model are in [PLUGINS.md](PLUGINS.md).
 
-## Kiosk: por que a trava tem três camadas
+## Kiosk: why the lockdown has three layers
 
-Fechar o navegador não basta — um usuário sai da aplicação por caminhos que o
-navegador nunca vê:
+Locking the browser is not enough — a user leaves the application through paths
+the browser never sees:
 
-| Escape | Onde é fechado |
+| Escape | Where it is closed |
 |---|---|
-| Ctrl+Alt+F2 (terminal virtual) | `getty@ttyN` mascarado + `NAutoVTs=0` no logind |
-| Ctrl+Alt+Del | `ctrl-alt-del.target` mascarado |
-| Ctrl+Alt+Backspace | `DontZap` no Xorg |
-| Alt+F4, Alt+Tab, menu do botão direito | `openbox-rc.xml` com `<keyboard>` e `<mouse>` vazios |
-| Ctrl+R, F12, Ctrl+O, arrastar arquivo | `src/kiosk.js` no próprio app |
-| Fechar o Chromium de algum jeito | laço `while true` no `xsession.sh` reabre |
+| Ctrl+Alt+F2 (virtual terminal) | `getty@ttyN` masked + `NAutoVTs=0` in logind |
+| Ctrl+Alt+Del | `ctrl-alt-del.target` masked |
+| Ctrl+Alt+Backspace | `DontZap` in Xorg |
+| Alt+F4, Alt+Tab, right-click menu | `openbox-rc.xml` with empty `<keyboard>` and `<mouse>` |
+| Ctrl+R, F12, Ctrl+O, dropping a file | `src/kiosk.js` inside the app |
+| Closing Chromium somehow | a `while true` loop in `xsession.sh` reopens it |
 
-A camada do navegador é a última, não a única: o Chromium nunca recebe Alt+F4,
-porque o gerenciador de janelas consome antes. E `kiosk.js` desliga-se sozinho
-no servidor de desenvolvimento — travar reload e devtools tornaria a UI
-impossível de desenvolver.
+The browser layer is the last one, not the only one: Chromium never receives
+Alt+F4, because the window manager consumes it first. And `kiosk.js` disables
+itself on the dev server — locking out reload and devtools would make the UI
+impossible to work on.
 
-## Primeira execução
+## First run
 
-`setup.state()` decide entre assistente e catálogo:
+`setup.state()` decides between the wizard and the catalog:
 
 ```
-nunca configurou           → assistente (reason="first_run")
-já configurou, mas offline → assistente (reason="offline")
-já configurou e online     → catálogo direto
+never configured             → wizard (reason="first_run")
+configured, but offline      → wizard (reason="offline")
+configured and online        → straight to the catalog
 ```
 
-Teclado vem antes de rede no assistente de propósito: a tela seguinte pede uma
-senha de Wi-Fi, e digitá-la com o layout errado é uma forma confusa de falhar.
-O campo de teste existe porque é a única maneira de o usuário descobrir o
-problema antes.
+Keyboard comes before network in the wizard on purpose: the next screen asks
+for a Wi-Fi password, and typing one with the wrong layout is a confusing way
+to fail. The test field exists because it is the only way for the user to
+discover the problem beforehand.
 
-"Pular por enquanto" grava `setup_completed` do mesmo jeito: quem tem cabo de
-rede, ou só quer bootar uma ISO que já está no pendrive, não pode ficar preso
-numa tela de Wi-Fi todo boot.
+"Skip for now" records `setup_completed` just the same: someone on an Ethernet
+cable, or who only wants to boot an ISO already on the stick, must not be
+trapped on a Wi-Fi screen every boot.
 
-## Adapters de boot
+## Boot adapters
 
-O erro que quebra a maioria das tentativas de "GRUB que boota qualquer ISO" é
-supor que existe um método universal. Não existe: cada distro põe kernel e
-initrd em lugares diferentes e espera parâmetros diferentes para achar o próprio
+The mistake that breaks most "GRUB that boots any ISO" attempts is assuming a
+universal method exists. It does not: every distribution puts its kernel and
+initrd somewhere different and expects different parameters to find its own
 root filesystem.
 
-A abstração aqui:
+The abstraction here:
 
 ```python
-detect(iso)  -> int   # confiança 0-100
+detect(iso)  -> int   # confidence 0-100
 prepare(iso, extract_dir, iso_rel_path) -> BootConfig
 ```
 
-`detect()` devolve **confiança, não booleano**. Uma ISO do Ubuntu tem
-`/casper/` e também `/EFI/BOOT/BOOTX64.EFI`; o adapter genérico casaria também.
-Com pontuação, o registry escolhe o melhor (Ubuntu 95 > genérico 10) em vez do
-primeiro que responder "talvez". Há teste cobrindo exatamente esse conflito.
+`detect()` returns **confidence, not a boolean**. An Ubuntu ISO has `/casper/`
+and also `/EFI/BOOT/BOOTX64.EFI`, so the generic adapter would match too. With
+scoring, the registry picks the best (Ubuntu 95 > generic 10) instead of the
+first one to answer "maybe". A test covers exactly that conflict.
 
-Dois métodos de saída:
+Two output methods:
 
-- **`linux`** — extrai kernel/initrd da ISO para `PENSYS/boot/extracted/<id>/`
-  e monta um `menuentry` que passa a ISO original como root via `findiso=`,
-  `iso-scan/filename=`, `inst.stage2=`, etc. Muito mais previsível que
-  chainload, porque não depende do bootloader interno da ISO.
-- **`chainload`** — para ISOs híbridas sem adapter dedicado: `loopback` +
-  `chainloader` no `BOOTX64.EFI` de dentro da própria ISO. Não extrai nada.
+- **`linux`** — extracts kernel/initrd from the ISO into
+  `PENSYS/boot/extracted/<id>/` and builds a `menuentry` that hands the
+  original ISO to the target OS as its root via `findiso=`,
+  `iso-scan/filename=`, `inst.stage2=` and so on. Far more predictable than
+  chainloading, because it does not depend on the ISO's own bootloader.
+- **`chainload`** — for hybrid ISOs with no dedicated adapter: `loopback` plus
+  `chainloader` into the ISO's own `BOOTX64.EFI`. Extracts nothing.
 
-A inspeção usa **pycdlib**, não loop mount: ler ISO9660 em espaço de usuário
-não exige root. Root só entra bem depois, no botão "Montar".
+Inspection uses **pycdlib**, not a loop mount: reading ISO9660 in user space
+needs no root. Root only appears much later, behind the "Mount" button.
 
-> Os `cmdline` de Arch e Proxmox mudam entre versões. Estão marcados no código
-> como ponto de partida a verificar contra a ISO específica, não como garantia.
+> The Arch and Proxmox `cmdline` values change between releases. They are
+> marked in the code as a starting point to verify against the specific ISO,
+> not as a guarantee.
 
 ## Downloads
 
-`aria2c` roda como **serviço systemd próprio**, não como filho da API. Um
-download de 3 GB precisa sobreviver a um restart da API; no startup,
-`downloader.resume_watchers()` reconecta aos GIDs ainda ativos. O arquivo
-parcial e o controle `.aria2` ficam em `PENDATA`, que é persistido — então
-retomar depois de desligar a máquina funciona de verdade.
+`aria2c` runs as **its own systemd service**, not as a child of the API. A 3 GB
+download has to survive an API restart; at startup,
+`downloader.resume_watchers()` reattaches to the GIDs still running. The
+partial file and its `.aria2` control file live on `PENDATA`, which is
+persisted — so resuming after powering the machine off genuinely works.
 
-Ordem que garante que "existe em `images/`" signifique "confiável":
+The ordering that makes "it exists in `images/`" mean "it is trustworthy":
 
 ```
-aria2 → images/.downloads/x.iso.part → SHA-256 → rename atômico → images/x.iso
+aria2 → images/.downloads/x.iso.part → SHA-256 → atomic rename → images/x.iso
 ```
 
-Verificação falhou → arquivo apagado, status `corrupted`. O `rename()` só
-acontece depois do hash conferir, então nada meio-baixado ou adulterado aparece
-como pronto para bootar.
+Verification failed → file deleted, status `corrupted`. The `rename()` only
+happens after the hash matches, so nothing half-downloaded or tampered with
+ever appears ready to boot.
 
-## Catálogo
+## Catalog
 
-`catalog.json` aponta direto para os servidores oficiais das distros — o projeto
-não hospeda ISO nenhuma. Ordem de fallback: remoto → cache em `PENDATA` →
-cópia embutida na squashfs. Offline, a UI ainda mostra o catálogo.
+`catalog.json` points straight at each distribution's official servers — the
+project hosts no ISOs at all. Fallback order: remote → cache on `PENDATA` →
+the copy bundled in the squashfs. Offline, the UI still shows the catalog.
 
-Manter hash na mão é como esse tipo de catálogo apodrece: a distro lança um
-point release, a URL passa a servir outro arquivo, e todo download falha na
-verificação. `tools/update_catalog.py` busca o arquivo de checksum oficial de
-cada fornecedor e reescreve as entradas. Ele entende os três formatos que os
-fornecedores realmente usam (`hash  arquivo`, com `*` binário, e o estilo BSD
-`SHA256 (arquivo) = hash` do Fedora dentro do bloco assinado por PGP).
+Maintaining hashes by hand is how this kind of catalog rots: the distribution
+ships a point release, the URL starts serving a different file, and every
+download fails verification. `tools/update_catalog.py` fetches each vendor's
+official checksum file and rewrites the entries. It understands the three
+formats vendors actually use (`hash  file`, the same with a `*` binary marker,
+and Fedora's BSD-style `SHA256 (file) = hash` inside a PGP-signed block).
 
-## Modo de desenvolvimento
+Entries whose URL is a rolling alias — Arch's `latest/archlinux-x86_64.iso` —
+also carry a `version_pattern`, because otherwise the hash gets corrected on
+every run while the version shown in the UI silently rots.
 
-`app/paths.py` decide, em tempo de import, se está no sistema live. Fora dele
-(ou com `PENLIVE_DEV=1`), tudo aponta para `./devdata/` e as operações
-privilegiadas retornam `503` em vez de estourar. É o que permite desenvolver a
-UI inteira em Windows/macOS sem pendrive e sem root.
+## Development mode
 
-Em produção `ensure_dirs()` deliberadamente **não** cria `/data` e `/boot`: se a
-partição não montou, criar o diretório esconderia a falha escrevendo no overlay.
-Melhor deixar faltar e reportar.
+`app/paths.py` decides at import time whether it is on the live system. Off it
+(or with `PENLIVE_DEV=1`), everything points at `./devdata/` and privileged
+operations return `503` instead of blowing up. That is what makes it possible
+to develop the entire UI on Windows/macOS with no stick and no root.
 
-## O que não foi feito, e por quê
+In production `ensure_dirs()` deliberately does **not** create `/data` and
+`/boot`: if the partition failed to mount, creating the directory would hide
+the failure by writing into the overlay. Better to let it be missing and report
+it.
 
-Na ordem em que faz sentido atacar:
+`PENLIVE_OFFLINE=1` additionally skips the startup network probes (catalog
+fetch, aria2 RPC). The test suite sets it so tests neither depend on internet
+access nor pay a network round-trip per app instance.
 
-1. **Windows / wimboot** — não é "mais um adapter": é um método de boot
-   completamente diferente (WIM/WinPE, BCD, `boot.sdi`). Entra depois que a
-   abstração de adapter estiver validada em hardware com as distros Linux.
-2. **Update A/B do Manager** — `system-a.squashfs` / `system-b.squashfs` com
-   rollback pelo GRUB. O layout de partição já reserva espaço pensando nisso.
-3. **Secure Boot** — exige shim assinado pela Microsoft e cadeia de assinatura
-   no builder; multiplica a complexidade de build e update.
-4. **BIOS legacy** — só se aparecer necessidade real. Suportar apenas UEFI
-   x86-64 elimina uma quantidade enorme de casos especiais.
+## Building under WSL
+
+WSL appends the entire Windows PATH after the Linux one, so inside Debian
+`command -v npm` can resolve to `C:\Program Files\nodejs\npm`. A dependency
+check that accepts it passes, Node is never installed in the distribution, and
+the build later fails inside CMD.EXE complaining that UNC paths are
+unsupported. `scripts/make-usb.sh` therefore strips `/mnt/` entries from PATH
+under WSL and treats any command resolving under `/mnt/` as absent.
+
+The build is also copied into the distribution's own filesystem first, never
+built on `/mnt/c` or `/mnt/d`: debootstrap needs device nodes and real
+ownership, which DrvFs cannot represent.
+
+## What was not done, and why
+
+In the order it makes sense to tackle:
+
+1. **Windows / wimboot** — not "another adapter": a completely different boot
+   method (WIM/WinPE, BCD, `boot.sdi`). It comes after the adapter abstraction
+   has been validated on hardware with the Linux distributions.
+2. **A/B updates of the manager** — `system-a.squashfs` / `system-b.squashfs`
+   with GRUB rollback. The partition layout already reserves room for it.
+3. **Secure Boot** — needs a Microsoft-signed shim and a signing chain in the
+   builder; it multiplies build and update complexity.
+4. **Legacy BIOS** — only if a real need appears. Supporting UEFI x86-64 alone
+   eliminates an enormous number of special cases.

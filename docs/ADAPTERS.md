@@ -1,7 +1,7 @@
 # Boot adapters
 
-Um adapter ensina o PenLive a bootar uma família de ISOs. É o ponto de
-extensão principal do projeto.
+An adapter teaches PenLive how to boot one family of ISOs. It is the project's
+main extension point.
 
 ## Interface
 
@@ -10,59 +10,60 @@ class BootAdapter(ABC):
     family: str
 
     def detect(self, iso: IsoImage) -> int:
-        """Confiança 0-100 de que este adapter sabe bootar esta ISO."""
+        """Confidence 0-100 that this adapter knows how to boot this ISO."""
 
     def prepare(self, iso: IsoImage, extract_dir: Path, iso_rel_path: str) -> BootConfig:
-        """Extrai o que precisar e devolve como bootar."""
+        """Extract whatever is needed and return how to boot it."""
 ```
 
-`detect()` devolve **confiança, não booleano**. Uma ISO do Ubuntu casa com
-`/casper/` e também com `/EFI/BOOT/BOOTX64.EFI` do adapter genérico; a pontuação
-faz o registry escolher o mais específico em vez do primeiro que responder
-"talvez".
+`detect()` returns **confidence, not a boolean**. An Ubuntu ISO matches
+`/casper/` and also the generic adapter's `/EFI/BOOT/BOOTX64.EFI`; scoring makes
+the registry pick the more specific one instead of the first to answer "maybe".
 
-Escala em uso:
+The scale in use:
 
-| Faixa | Uso |
+| Range | Meaning |
 |---|---|
-| 85–95 | assinatura específica da distro (`/casper/vmlinuz`) |
-| 40–60 | família mais ampla, sem certeza de variante |
-| 10 | fallback genérico (só existe `BOOTX64.EFI`) |
-| 0 | não casa |
+| 85–95 | distribution-specific signature (`/casper/vmlinuz`) |
+| 40–60 | broader family, variant not certain |
+| 10 | generic fallback (only `BOOTX64.EFI` exists) |
+| 0 | no match |
 
 ## `BootConfig`
 
 ```python
 BootConfig(
-    method="linux",              # ou "chainload"
+    method="linux",              # or "chainload"
     label="Ubuntu",
-    kernel="vmlinuz",            # nome do arquivo dentro de extract_dir
+    kernel="vmlinuz",            # file name inside extract_dir
     initrd="initrd",
     cmdline="boot=casper iso-scan/filename=/images/x.iso quiet ---",
-    iso_rel_path="images/x.iso", # caminho relativo à raiz de PENDATA
+    iso_rel_path="images/x.iso", # path relative to the root of PENDATA
 )
 ```
 
-`kernel`/`initrd` são **só nomes de arquivo**. Quem monta o caminho final
-(`boot/extracted/<image_id>/...`) é o `bootmanager`; o adapter não precisa saber
-onde o arquivo vai parar.
+`kernel`/`initrd` are **file names only**. The `bootmanager` builds the final
+path (`boot/extracted/<image_id>/...`); an adapter does not need to know where
+the file ends up.
 
-`iso_rel_path` é o caminho da ISO **no pendrive**, e é o que entra no `cmdline`.
-Usar o caminho temporário de inspeção aqui é o erro clássico: boota e dá kernel
-panic porque o sistema-alvo não acha o próprio root. Existe teste para isso.
+`iso_rel_path` is the path of the ISO **on the stick**, and it is what goes into
+the `cmdline`. Using the temporary inspection path here is the classic mistake:
+it boots and kernel-panics because the target system cannot find its own root.
+There is a test for exactly that.
 
-## Métodos
+## Methods
 
-**`linux`** — extrai kernel e initrd, boota direto pelo GRUB e aponta o initrd
-do sistema-alvo para a ISO original. Preferível: não depende do bootloader
-interno da ISO.
+**`linux`** — extracts kernel and initrd, boots straight from GRUB, and points
+the target system's initrd at the original ISO. Preferred: it does not depend on
+the ISO's own bootloader.
 
-**`chainload`** — GRUB dá `loopback` na ISO e `chainloader` no `BOOTX64.EFI`
-dela. Não extrai nada. Fallback para ISOs híbridas sem adapter dedicado.
+**`chainload`** — GRUB `loopback`s the ISO and `chainloader`s its
+`BOOTX64.EFI`. Extracts nothing. A fallback for hybrid ISOs with no dedicated
+adapter.
 
-## Adapters existentes
+## Existing adapters
 
-| Família | Assinatura | Score | cmdline |
+| Family | Signature | Score | cmdline |
 |---|---|---|---|
 | `ubuntu` | `/casper/vmlinuz` | 95 | `boot=casper iso-scan/filename=` |
 | `debian` | `/live/vmlinuz` | 90 | `boot=live findiso=` |
@@ -71,33 +72,39 @@ dela. Não extrai nada. Fallback para ISOs híbridas sem adapter dedicado.
 | `arch` | `/arch/boot/x86_64/vmlinuz-linux` | 85 | `img_dev=... img_loop=` |
 | `generic` | `/EFI/BOOT/BOOTX64.EFI` | 10 | chainload |
 
-> Os `cmdline` de Arch e Proxmox variam entre versões. Trate como ponto de
-> partida: confira `/loader/entries/*.conf` ou `/boot/grub/grub.cfg` dentro da
-> ISO específica antes de confiar em produção.
+Several catalog entries reuse an existing adapter rather than needing a new
+one: Linux Mint is Ubuntu-derived and uses the casper layout, and Rocky Linux
+is RHEL-family with the Anaconda `/images/pxeboot` layout.
 
-## Escrever um novo adapter
+> The Arch and Proxmox `cmdline` values vary between releases. Treat them as a
+> starting point: check `/loader/entries/*.conf` or `/boot/grub/grub.cfg` inside
+> the specific ISO before relying on them in production.
 
-1. Crie `manager/backend/app/adapters/minhadistro.py`.
-2. Descubra a assinatura: monte a ISO (ou use `pycdlib`) e ache kernel/initrd.
-3. Descubra o `cmdline`: leia o `isolinux.cfg`, `grub.cfg` ou
-   `loader/entries/*.conf` **de dentro da ISO** — é a fonte autoritativa.
-4. Registre em `registry.py` (`REGISTRY`).
-5. Adicione uma fixture em `tests/isofactory.py` e um caso no
-   `@pytest.mark.parametrize` de `tests/test_adapters.py`.
+## Writing a new adapter
+
+1. Create `manager/backend/app/adapters/mydistro.py`.
+2. Find the signature: mount the ISO (or use `pycdlib`) and locate
+   kernel/initrd.
+3. Find the `cmdline`: read `isolinux.cfg`, `grub.cfg` or
+   `loader/entries/*.conf` **from inside the ISO** — that is the authoritative
+   source.
+4. Register it in `registry.py` (`REGISTRY`).
+5. Add a fixture to `tests/isofactory.py` and a case to the
+   `@pytest.mark.parametrize` in `tests/test_adapters.py`.
 
 ```python
-class MinhaDistroAdapter(BootAdapter):
-    family = "minhadistro"
+class MyDistroAdapter(BootAdapter):
+    family = "mydistro"
 
     def detect(self, iso: IsoImage) -> int:
-        return 85 if iso.exists("/minhadistro/vmlinuz") else 0
+        return 85 if iso.exists("/mydistro/vmlinuz") else 0
 
     def prepare(self, iso: IsoImage, extract_dir: Path, iso_rel_path: str) -> BootConfig:
-        kernel = iso.extract_file("/minhadistro/vmlinuz", extract_dir / "vmlinuz")
-        initrd = iso.extract_file("/minhadistro/initrd", extract_dir / "initrd")
+        kernel = iso.extract_file("/mydistro/vmlinuz", extract_dir / "vmlinuz")
+        initrd = iso.extract_file("/mydistro/initrd", extract_dir / "initrd")
         return BootConfig(
             method="linux",
-            label="Minha Distro",
+            label="My Distro",
             kernel=kernel.name,
             initrd=initrd.name,
             cmdline=f"root=live:CDLABEL=PENDATA iso={iso_rel_path}",
@@ -105,14 +112,14 @@ class MinhaDistroAdapter(BootAdapter):
         )
 ```
 
-Os testes usam ISOs sintéticas de poucos KB (`tests/isofactory.py`) — o que
-importa testar é a detecção de caminho, não o payload.
+The tests use synthetic ISOs of a few KB (`tests/isofactory.py`) — what matters
+is testing path detection, not the payload.
 
-## Windows: por que ainda não existe
+## Windows: why it does not exist yet
 
-Windows não é "mais um adapter". A ISO tem `/sources/boot.wim`,
-`/sources/install.wim`, `/boot/bcd`, `/boot/boot.sdi` — não há kernel/initrd
-para extrair, e o boot passa por **wimboot** carregando WinPE, que só então roda
-o `setup.exe`. É um terceiro `method`, com extração e geração de config
-próprias. Entra depois que a abstração atual estiver validada em hardware real
-com as distros Linux.
+Windows is not "another adapter". The ISO has `/sources/boot.wim`,
+`/sources/install.wim`, `/boot/bcd`, `/boot/boot.sdi` — there is no
+kernel/initrd to extract, and booting goes through **wimboot** loading WinPE,
+which only then runs `setup.exe`. It is a third `method`, with its own
+extraction and config generation. It comes after the current abstraction has
+been validated on real hardware with the Linux distributions.

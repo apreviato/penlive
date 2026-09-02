@@ -1,39 +1,42 @@
-# Construir, gravar e testar
+# Building, writing and testing
 
-## Requisitos
+## Requirements
 
-Host **Debian 13 / Ubuntu 24.04+**, com root. `live-build` só roda em Debian ou
-derivado — em outro SO, use uma VM ou container Debian.
+A **Debian 13 / Ubuntu 24.04+** host, with root. `live-build` only runs on
+Debian or a derivative — on any other OS, use a Debian VM or container.
 
 ```bash
-sudo apt install live-build grub-efi-amd64-bin grub-common gdisk dosfstools exfatprogs e2fsprogs zstd qemu-system-x86 ovmf nodejs npm python3
+sudo apt install live-build grub-efi-amd64-bin grub-common gdisk dosfstools exfatprogs e2fsprogs zstd qemu-system-x86 ovmf nodejs npm python3 rsync
 ```
 
-## Caminho rápido: script guiado
+## Fast path: the guided script
 
-Faz todos os passos deste documento numa sequência só, perguntando antes de
-cada etapa irreversível:
+Runs every step in this document in one sequence, asking before each
+irreversible stage:
 
 ```bash
 sudo ./scripts/make-usb.sh
 ```
 
-O que ele resolve além de encadear comandos:
+What it handles beyond chaining commands:
 
-- **Dependências** — detecta o que falta e oferece instalar via apt.
-- **Etapas já prontas** — reaproveita frontend e sistema live existentes em vez
-  de reconstruir (o live-build leva 20-40 min).
-- **npm como usuário** — roda `npm ci` com `SUDO_USER`, para não deixar
-  `node_modules` pertencente ao root no seu repositório.
-- **Pendrive pequeno** — um pendrive de "16 GB" tem ~14,9 GiB e não cabe no
-  layout padrão (precisa de 16,5 GiB). O script reduz a partição de
-  persistência automaticamente, em vez de falhar com um erro cru no meio do
-  processo. Abaixo de ~13 GiB ele recusa com uma explicação.
-- **Escolha do alvo** — lista os discos marcando o disco do sistema e os não
-  removíveis, e desmonta partições montadas antes de gravar.
-- **Confirmação** — exige digitar o caminho do dispositivo. Nem `--yes` pula.
+- **Dependencies** — detects what is missing and offers to install it with apt.
+- **Work already done** — reuses an existing frontend and live system instead
+  of rebuilding (live-build takes 20-40 minutes).
+- **npm as the invoking user** — runs `npm ci` under `SUDO_USER`, so a
+  root-owned `node_modules` is not left in your repository.
+- **Small sticks** — a "16 GB" stick holds about 14.9 GiB and does not fit the
+  default layout, which needs 16.5 GiB. The script shrinks the persistence
+  partition automatically instead of failing with a raw error partway through.
+  Below roughly 13 GiB it refuses, with an explanation.
+- **Target selection** — lists disks marking the system disk and non-removable
+  drives, and unmounts mounted partitions before writing.
+- **Confirmation** — requires typing the device path. Not even `--yes` skips it.
+- **Progress** — the live-build stage prints a status line on each phase and
+  every 15 seconds, so a long silence (squashfs compression emits nothing for
+  minutes) is distinguishable from a hang.
 
-Opções úteis:
+Useful options:
 
 ```bash
 sudo ./scripts/make-usb.sh --device /dev/sdb --skip-build
@@ -43,87 +46,89 @@ sudo ./scripts/make-usb.sh --device /dev/sdb --skip-build
 sudo ./scripts/make-usb.sh --data-fs ext4 --persist-mib 16384
 ```
 
-Log completo em `make-usb.log`.
+Full log in `make-usb.log`.
 
-## No Windows
+## On Windows
 
-Um comando faz tudo — instala o que falta, constrói e grava:
+One command does everything — installs what is missing, builds, and writes:
 
 ```powershell
 .\scripts\make-usb.ps1
 ```
 
-Precisa de PowerShell **como administrador**. Se não houver WSL com uma
-distribuição Debian, ele oferece instalar (`wsl --install -d Debian
---no-launch`); depois instala as dependências de build, constrói a interface e
-o sistema live, e grava o pendrive.
+Needs PowerShell **as Administrator**. If there is no WSL distribution from the
+Debian family, it offers to install one (`wsl --install -d Debian --no-launch`);
+then it installs the build dependencies, builds the interface and the live
+system, and writes the stick.
 
-`live-build` só roda em Debian, então a metade Linux acontece dentro do WSL.
-Há dois caminhos, tentados nesta ordem:
+`live-build` only runs on Debian, so the Linux half happens inside WSL. Two
+routes, tried in this order:
 
-**1. Passagem do disco (preferido).** `wsl --mount --bare` entrega o pendrive
-cru ao WSL, e o mesmo `make-usb.sh` que os usuários Linux rodam particiona e
-grava. Usa o pendrive **inteiro**, e existe um único caminho de código testado
-em vez de uma reimplementação para Windows.
+**1. Disk passthrough (preferred).** `wsl --mount --bare` hands the raw stick to
+WSL, and the same `make-usb.sh` that Linux users run partitions and writes it.
+It uses the **whole** stick, and there is a single tested code path rather than
+a Windows reimplementation.
 
-**2. Imagem (reserva).** Onde a passagem não funciona, o WSL gera uma `.img` de
-tamanho fixo e o PowerShell grava a partir do Windows. Mais simples, mas a
-partição de dados fica limitada ao tamanho da imagem em vez de ocupar o
-pendrive todo.
+**2. Image (fallback).** Where passthrough is unavailable, WSL produces a
+fixed-size `.img` and PowerShell writes it from Windows. Simpler, but the data
+partition is capped at the image size instead of filling the stick.
 
-O build acontece dentro do sistema de arquivos do WSL, nunca em `/mnt/d`: o
-`debootstrap` precisa de nós de dispositivo e permissões reais, que o DrvFs não
-representa, então um chroot construído ali quebra no meio.
+The build happens inside the WSL filesystem, never on `/mnt/d`: `debootstrap`
+needs device nodes and real ownership, which DrvFs cannot represent, so a
+chroot built there breaks partway through.
 
-Gravar uma imagem já pronta, sem construir nada:
+Writing an image that already exists, building nothing:
 
 ```powershell
 .\scripts\make-usb.ps1 -Image .\dist\penlive-amd64.img.zst
 ```
 
-As mesmas garantias do script Linux valem: o disco do sistema e unidades não
-removíveis são recusados, e a gravação exige digitar o número do disco. No
-caminho de imagem, o disco é lido de volta e comparado byte a byte
-(`-NoVerify` pula).
+The same guarantees as the Linux script apply: the system disk and
+non-removable drives are refused, and writing requires typing the disk number.
+On the image route, the disk is read back and compared byte for byte
+(`-NoVerify` skips that).
 
-Arquivos `.img.zst` precisam de `zstd.exe` no PATH
+`.img.zst` files need `zstd.exe` on PATH
 (`winget install Facebook.Zstandard`).
 
-> O `docker-desktop` que o Docker Desktop cria **não** serve como distribuição
-> de build — não tem apt nem systemd — e o script o ignora explicitamente em vez
-> de falhar 30 minutos depois.
+> The `docker-desktop` distribution that Docker Desktop creates is **not**
+> usable as a build environment — it has neither apt nor systemd — and the
+> script skips it explicitly rather than failing 30 minutes later.
 
-> **Interop do WSL.** O WSL acrescenta todo o PATH do Windows ao do Linux, então
-> um `command -v npm` dentro do Debian pode encontrar
-> `C:\Program Files\nodejs\npm`. A verificação de dependências passaria, o Node
-> nunca seria instalado no Debian, e o build quebraria bem mais tarde dentro do
-> `CMD.EXE` reclamando que caminhos UNC não são suportados. O script remove as
-> entradas `/mnt/` do PATH e trata qualquer binário que resolva em `/mnt/` como
-> ausente.
+> **WSL interop.** WSL appends the entire Windows PATH to the Linux one, so
+> `command -v npm` inside Debian can find `C:\Program Files\nodejs\npm`. The
+> dependency check would pass, Node would never be installed in Debian, and the
+> build would break much later inside `CMD.EXE` complaining that UNC paths are
+> unsupported. The script strips `/mnt/` entries from PATH and treats any
+> binary resolving under `/mnt/` as absent.
 
-> Se o WSL acabou de ser habilitado, o Windows precisa reiniciar antes de
-> instalar distribuições. O script detecta isso e avisa em vez de falhar de
-> forma obscura.
+> If WSL has only just been enabled, Windows needs a reboot before
+> distributions can be installed. The script detects that and says so, rather
+> than failing obscurely.
 
-O restante deste documento descreve os mesmos passos manualmente, útil para
-depurar uma etapa específica.
+The rest of this document describes the same steps manually, which is useful
+for debugging one stage in isolation.
 
 ## 1. Frontend
 
-Obrigatório antes do live: a API serve o `dist/` como arquivos estáticos, então
-sem ele o sistema live sobe sem interface.
+Required before the live build: the API serves `dist/` as static files, so
+without it the live system comes up with no interface.
 
 ```bash
 cd manager/frontend && npm ci && npm run build
 ```
 
-## 2. Sistema live
+Vite 8 needs Node `^20.19` or `>=22.12`. Debian trixie ships 20.19.2, which
+just qualifies; an older base fails deep inside the bundler with an error that
+never mentions Node.
+
+## 2. Live system
 
 ```bash
 sudo ./live/build.sh
 ```
 
-Demora bastante (baixa um Debian inteiro) e produz:
+Takes a while (it downloads an entire Debian) and produces:
 
 ```
 live/build/out/vmlinuz
@@ -131,54 +136,59 @@ live/build/out/initrd.img
 live/build/out/filesystem.squashfs
 ```
 
-O script copia backend, builder, catálogo, units systemd e o `dist/` do frontend
-para dentro do chroot, e o hook `0200-install-manager` cria a venv com as
-dependências já resolvidas — o sistema live precisa funcionar sem rede.
+The script copies the backend, builder, catalog, systemd units and the
+frontend's `dist/` into the chroot, and the `0200-install-manager` hook creates
+the venv with dependencies already resolved — the live system has to work with
+no network.
 
-## 3a. Gravar direto num pendrive
+## 3a. Writing straight to a stick
 
 ```bash
 sudo PYTHONPATH=builder python -m penlive.cli devices
 ```
 
-**Sempre rode o dry-run primeiro.** Ele imprime a sequência exata de comandos
-sem executar nada:
+**Always run the dry run first.** It prints the exact command sequence without
+executing anything:
 
 ```bash
 sudo PYTHONPATH=builder python -m penlive.cli install /dev/sdb --dry-run --live-dir live/build/out
 ```
 
-Conferido o plano:
+Once the plan looks right:
 
 ```bash
 sudo PYTHONPATH=builder python -m penlive.cli install /dev/sdb --live-dir live/build/out
 ```
 
-Ele exige que você digite `/dev/sdb` para confirmar. As guardas recusam nome de
-partição (`/dev/sdb1`) e o disco do sistema em execução.
+It requires you to type `/dev/sdb` to confirm. The guards refuse partition
+names (`/dev/sdb1`) and the disk the running system booted from.
 
-Opções úteis: `--data-fs ext4` (se o pendrive nunca vai ver Windows),
-`--persist-mib`, `--system-mib`, `--log auditoria.txt`.
+Useful options: `--data-fs ext4` (if the stick will never see Windows),
+`--persist-mib`, `--system-mib`, `--log audit.txt`.
 
-Verificar depois:
+Verify afterwards:
 
 ```bash
 sudo PYTHONPATH=builder python -m penlive.cli validate /dev/sdb
 ```
 
-## 3b. Gerar uma imagem distribuível
+## 3b. Producing a distributable image
 
-Não toca em disco físico nenhum — monta tudo num loop device:
+Touches no physical disk — it does everything on a loop device:
 
 ```bash
 sudo PYTHONPATH=builder python -m penlive.cli image dist/penlive-amd64.img \
-    --size-mib 16384 --live-dir live/build/out --compress
+    --size-mib 20480 --live-dir live/build/out --compress
 ```
 
-Resultado: `dist/penlive-amd64.img.zst`, que o usuário final grava com
-Rufus, balenaEtcher ou `dd`.
+Result: `dist/penlive-amd64.img.zst`, which an end user writes with Rufus,
+balenaEtcher or `dd`.
 
-## 4. Testar em QEMU (faça isso antes do hardware)
+`--size-mib` must exceed the fixed partitions (12800 MiB) plus a 4096 MiB
+minimum data partition. 16384 looks like a natural default but is rejected for
+leaving only 3584 MiB.
+
+## 4. Testing in QEMU (do this before hardware)
 
 ```bash
 sudo qemu-system-x86_64 -enable-kvm -m 4096 -smp 2 \
@@ -187,7 +197,7 @@ sudo qemu-system-x86_64 -enable-kvm -m 4096 -smp 2 \
     -netdev user,id=n0 -device virtio-net-pci,netdev=n0
 ```
 
-Ou contra a imagem, sem pendrive:
+Or against the image, with no stick:
 
 ```bash
 sudo qemu-system-x86_64 -enable-kvm -m 4096 -smp 2 \
@@ -195,43 +205,48 @@ sudo qemu-system-x86_64 -enable-kvm -m 4096 -smp 2 \
     -drive file=dist/penlive-amd64.img,format=raw,if=virtio
 ```
 
-Roteiro mínimo de validação:
+Minimum validation script:
 
-1. GRUB aparece e "PenLive Manager" boota.
-2. Chromium sobe fullscreen na tela de rede (sem desktop visível).
-3. Conectar no Wi-Fi (ou usar a rede do QEMU) e chegar no catálogo.
-4. Baixar uma ISO; matar a VM em ~50% e reiniciar — o download deve retomar.
-5. Verificação SHA-256 passa e o status vira `ready`.
-6. "Bootar" agenda o pending boot; reiniciar deve cair no instalador.
-7. Reiniciar mais 3× com um pending boot quebrado — o watchdog deve desistir e
-   voltar ao Manager.
-8. Persistência: reiniciar e confirmar que o Wi-Fi reconecta sozinho.
+1. GRUB appears and "PenLive Manager" boots.
+2. Chromium comes up fullscreen on the network screen (no desktop visible).
+3. Connect to Wi-Fi (or use QEMU's network) and reach the catalog.
+4. Download an ISO; kill the VM at roughly 50% and restart — the download
+   should resume.
+5. SHA-256 verification passes and the status becomes `ready`.
+6. "Boot" schedules the pending boot; restarting should land in the installer.
+7. Restart 3 more times with a broken pending boot — the watchdog should give
+   up and return to the manager.
+8. Persistence: restart and confirm Wi-Fi reconnects by itself.
 
-## Manutenção do catálogo
+## Catalog maintenance
 
 ```bash
 python tools/update_catalog.py
 ```
 
-Sai com código 1 se algum hash ou tamanho divergir do publicado pelo
-fornecedor. Bom candidato a job semanal de CI.
+Exits 1 if any hash, size or version differs from what the vendor publishes.
+A good candidate for a weekly CI job.
 
 ```bash
 python tools/update_catalog.py --write
 ```
 
-## Problemas comuns
+## Common problems
 
-**GRUB não aparece / máquina ignora o pendrive** — Secure Boot precisa estar
-desativado (ainda não suportado). Confirme também que o boot é UEFI, não legacy.
+**GRUB does not appear / the machine ignores the stick** — Secure Boot must be
+disabled (not supported yet). Confirm the boot is UEFI, not legacy.
 
-**GRUB abre mas não acha o kernel** — o label `PENSYS` não bateu.
-`sudo blkid /dev/sdb2` deve mostrar `LABEL="PENSYS"`.
+**GRUB opens but cannot find the kernel** — the `PENSYS` label did not match.
+`sudo blkid /dev/sdb2` should show `LABEL="PENSYS"`.
 
-**Sobe em modo texto, sem Chromium** — `journalctl -u penlive-kiosk` e
-`journalctl -u penlive-api`. Quase sempre é `manager/frontend/dist` ausente na
-hora do build.
+**Comes up in text mode, no Chromium** — check `journalctl -u penlive-kiosk`
+and `journalctl -u penlive-api`. Almost always a missing
+`manager/frontend/dist` at build time.
 
-**Sistema baixado não boota** — quase sempre `cmdline` do adapter. Use a entrada
-"Ignore pending boot" no menu Recovery, e compare o `cmdline` gerado com o
-`/boot/grub/grub.cfg` de dentro da ISO em questão.
+**A downloaded system does not boot** — almost always the adapter `cmdline`.
+Use the "Ignore pending boot" entry in the Recovery menu, and compare the
+generated `cmdline` against the `/boot/grub/grub.cfg` inside that ISO.
+
+**The build succeeds but artifact collection fails** — live-build emits both
+`vmlinuz` and `vmlinuz-<version>` as hardlinks. `live/build.sh` prefers the
+unversioned name and refuses to guess between multiple kernel flavours.
