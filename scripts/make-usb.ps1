@@ -51,6 +51,10 @@
 .PARAMETER NoVerify
     Skip the read-back verification after an image write.
 
+.PARAMETER VerifyOnly
+    Compare a stick that was already written against an image, without
+    erasing or rewriting anything. Requires -Image.
+
 .EXAMPLE
     .\scripts\make-usb.ps1
 
@@ -69,7 +73,8 @@ param(
     [switch] $SkipBuild,
     [int]    $ImageSizeMib = 0,
     [switch] $FullWrite,
-    [switch] $NoVerify
+    [switch] $NoVerify,
+    [switch] $VerifyOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -143,8 +148,13 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
     Fail "must run elevated. Right-click PowerShell and choose 'Run as Administrator'."
 }
 
+if ($VerifyOnly -and -not $Image) {
+    Fail "-VerifyOnly needs -Image, since there is nothing to compare the stick against."
+}
+
 $FlashOnly = [bool] $Image
-if ($FlashOnly) { $script:TotalSteps = 3 }
+if ($FlashOnly)  { $script:TotalSteps = 3 }
+if ($VerifyOnly) { $script:TotalSteps = 2 }
 
 # --------------------------------------------------------- 1. WSL + distro ----
 
@@ -296,17 +306,21 @@ if ($disk.BusType -ne 'USB') {
     if (-not (Confirm-YesNo "Continue anyway?" $false)) { Fail "aborted" }
 }
 
-Say ""
-Write-Host "     Everything on disk $DiskNumber ($($disk.FriendlyName)) will be erased." -Foreground Red
-Say ""
-Get-Partition -DiskNumber $DiskNumber -ErrorAction SilentlyContinue |
-    Format-Table -AutoSize PartitionNumber, DriveLetter,
-        @{n='Size(GB)';e={'{0:N1}' -f ($_.Size/1GB)}}, Type |
-    Out-String | ForEach-Object { Write-Host $_ }
+if (-not $VerifyOnly) {
+    Say ""
+    Write-Host "     Everything on disk $DiskNumber ($($disk.FriendlyName)) will be erased." -Foreground Red
+    Say ""
+    Get-Partition -DiskNumber $DiskNumber -ErrorAction SilentlyContinue |
+        Format-Table -AutoSize PartitionNumber, DriveLetter,
+            @{n='Size(GB)';e={'{0:N1}' -f ($_.Size/1GB)}}, Type |
+        Out-String | ForEach-Object { Write-Host $_ }
 
-Write-Host "     Type the disk number to confirm erasing it."
-$typed = Read-Host "     disk $DiskNumber >"
-if ($typed -ne "$DiskNumber") { Fail "confirmation did not match; nothing was written" }
+    Write-Host "     Type the disk number to confirm erasing it."
+    $typed = Read-Host "     disk $DiskNumber >"
+    if ($typed -ne "$DiskNumber") { Fail "confirmation did not match; nothing was written" }
+} else {
+    Info "verify only: the stick will be read, never written"
+}
 
 $devicePath = "\\.\PHYSICALDRIVE$DiskNumber"
 
@@ -457,6 +471,11 @@ if (-not $usedPassthrough) {
         Fail ("disk $DiskNumber holds {0:N1} GiB but the image needs {1:N1} GiB" -f ($disk.Size/1GB), ($imageBytes/1GB))
     }
 
+    if ($VerifyOnly) {
+        # $bufferSize is set inside the write block, which is skipped here.
+        $bufferSize = 4MB
+    } else {
+
     Step "Writing disk $DiskNumber"
     Info "clearing existing partitions"
     Clear-Disk -Number $DiskNumber -RemoveData -RemoveOEM -Confirm:$false -ErrorAction SilentlyContinue
@@ -524,6 +543,8 @@ if (-not $usedPassthrough) {
         if ($source) { $source.Dispose() }
     }
 
+    }  # end of the write block, skipped under -VerifyOnly
+
     Step "Verifying"
     if ($NoVerify) {
         Warn "skipped (-NoVerify)"
@@ -538,7 +559,13 @@ if (-not $usedPassthrough) {
             $zeroBuf = New-Object byte[] $bufferSize
             $checked = 0L; $mismatch = $false
             while ($checked -lt $imageBytes) {
-                $want = [Math]::Min($bufferSize, $imageBytes - $checked)
+                # [int64] on both arguments picks Math::Min(Int64, Int64).
+                # Without it PowerShell selects the Int32 overload from
+                # $bufferSize and then fails converting the remaining byte
+                # count, so verification died on the first block of any image
+                # larger than 2 GiB. The result always fits an Int32 because it
+                # is capped at $bufferSize, which Read() requires.
+                $want = [int][Math]::Min([int64]$bufferSize, $imageBytes - $checked)
                 $a = $source.Read($bufA, 0, $want)
                 if ($a -le 0) { break }
 
