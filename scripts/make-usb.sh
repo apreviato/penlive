@@ -380,10 +380,15 @@ if [[ ${live_ready} -eq 0 ]]; then
     note "progress below updates every 15s; long gaps during compression are normal"
     log ""
 
-    set -o pipefail
+    # pipefail off just for this pipeline, so `set -e` cannot abort before
+    # PIPESTATUS is read. It is restored immediately: leaving it off made the
+    # later `python ... | tee || die` report tee's exit status instead of
+    # python's, so a failed image build looked successful and the caller went
+    # on to write an empty image to a real USB stick.
+    set +o pipefail
     "${REPO_ROOT}/live/build.sh" 2>&1 | live_build_progress
     live_rc=${PIPESTATUS[0]}
-    set +o pipefail
+    set -o pipefail
 
     log ""
     (( live_rc == 0 )) || die "live build failed (exit ${live_rc}) - see ${LOG_FILE}"
@@ -411,8 +416,17 @@ if [[ ${BUILD_ONLY} -eq 1 ]]; then
         --efi-mib "${EFI_MIB}" --system-mib "${SYSTEM_MIB}" \
         --persist-mib "${PERSIST_MIB}" --data-fs "${DATA_FS}" \
         --log "${LOG_FILE}" \
-        2>&1 | tee -a "${LOG_FILE}" >&2 \
-        || die "image build failed - see ${LOG_FILE}"
+        2>&1 | tee -a "${LOG_FILE}" >&2
+    image_rc=${PIPESTATUS[0]}
+    (( image_rc == 0 )) || die "image build failed (exit ${image_rc}) - see ${LOG_FILE}"
+
+    # Explicitly confirm the image is what it claims to be. `truncate` creates
+    # the file before anything is written to it, so a build that dies partway
+    # still leaves a plausible-looking 20 GiB file behind - and handing that to
+    # a flasher writes 20 GiB of zeroes over someone's USB stick.
+    if ! sgdisk -p "${IMAGE_OUT}" 2>/dev/null | grep -q 'PENSYS'; then
+        die "image at ${IMAGE_OUT} has no PENSYS partition - the build did not complete"
+    fi
 
     ok "image ready at ${IMAGE_OUT}"
     log ""

@@ -17,12 +17,52 @@ set prefix=($root)/boot/grub
 configfile ($root)/boot/grub/grub.cfg
 """
 
-STANDALONE_MODULES = (
-    "part_gpt fat ext2 exfat search search_label search_fs_file "
-    "configfile normal boot linux linuxefi initrd initrdefi "
-    "loopback iso9660 chain all_video gfxterm echo test true "
-    "ls cat reboot halt"
+GRUB_EFI_MODULE_DIR = Path("/usr/lib/grub/x86_64-efi")
+
+# Without these the embedded config cannot find PENSYS or hand off to the real
+# grub.cfg, so their absence is a hard error rather than something to skip.
+REQUIRED_MODULES = (
+    "part_gpt", "fat", "ext2", "search", "search_label",
+    "configfile", "normal", "linux", "boot",
 )
+
+# Useful but not fatal to omit: exfat only matters for the chainload method,
+# and the display/utility modules just make the recovery console nicer.
+OPTIONAL_MODULES = (
+    "exfat", "search_fs_file", "loopback", "iso9660", "chain",
+    "all_video", "gfxterm", "echo", "test", "true", "ls", "cat",
+    "reboot", "halt",
+    # linuxefi/initrdefi exist only on Fedora/RHEL, which carry extra Secure
+    # Boot patches; Debian's plain `linux` module handles EFI itself. There is
+    # likewise no separate `initrd` module - that command lives in linux.mod.
+    # Listing them unconditionally made grub-mkstandalone abort on Debian with
+    # "cannot open .../linuxefi.mod", after the whole image had been laid out.
+    "linuxefi", "initrdefi",
+)
+
+
+def available_modules(module_dir: Path = GRUB_EFI_MODULE_DIR) -> list[str]:
+    """Modules to pass to grub-mkstandalone, filtered to what this host has.
+
+    GRUB module names are not portable across distributions, so the set is
+    resolved against the installed module directory rather than hardcoded.
+    """
+    if not module_dir.is_dir():
+        # Nothing to filter against (dry run on another OS, or an unusual
+        # layout). Fall back to the required set and let grub-mkstandalone
+        # report anything genuinely missing.
+        return list(REQUIRED_MODULES)
+
+    present = {p.stem for p in module_dir.glob("*.mod")}
+
+    missing_required = [m for m in REQUIRED_MODULES if m not in present]
+    if missing_required:
+        raise RuntimeError(
+            f"grub-efi is missing required module(s): {', '.join(missing_required)}. "
+            f"Looked in {module_dir}. Install grub-efi-amd64-bin."
+        )
+
+    return list(REQUIRED_MODULES) + [m for m in OPTIONAL_MODULES if m in present]
 
 
 def build_standalone_efi(runner: CommandRunner, output_path: Path, workdir: Path) -> None:
@@ -34,7 +74,7 @@ def build_standalone_efi(runner: CommandRunner, output_path: Path, workdir: Path
             "grub-mkstandalone",
             "-O", "x86_64-efi",
             "-o", str(output_path),
-            f"--modules={STANDALONE_MODULES}",
+            f"--modules={' '.join(available_modules())}",
             f"boot/grub/grub.cfg={embedded}",
         ]
     )

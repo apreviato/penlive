@@ -388,6 +388,30 @@ if (-not $usedPassthrough) {
     if (-not (Test-Path -LiteralPath $Image)) { Fail "no such file: $Image" }
     $imageItem = Get-Item -LiteralPath $Image
 
+    # Never write an image that is not demonstrably a PenLive image. `truncate`
+    # creates the file up front, so a build that dies partway leaves a
+    # plausible-looking 20 GiB of zeroes behind; flashing that silently wipes
+    # the stick and produces something that cannot boot. Check for the GPT
+    # signature and the PENSYS/PENDATA partition names in the header.
+    if ($imageItem.Extension -ne '.zst') {
+        $head = New-Object byte[] 262144
+        $fs = [System.IO.File]::OpenRead($imageItem.FullName)
+        try { $read = $fs.Read($head, 0, $head.Length) } finally { $fs.Dispose() }
+
+        $ascii = -join ($head[0..([Math]::Min($read, $head.Length) - 1)] |
+                        ForEach-Object { if ($_ -ge 32 -and $_ -lt 127) { [char]$_ } else { '.' } })
+        $utf16 = [System.Text.Encoding]::Unicode.GetString($head, 0, [Math]::Min($read, $head.Length))
+
+        if ($ascii -notmatch 'EFI PART') {
+            Fail "$($imageItem.Name) has no GPT header - the build did not complete. Nothing was written."
+        }
+        # GPT stores partition names as UTF-16LE.
+        if ($utf16 -notmatch 'PENSYS') {
+            Fail "$($imageItem.Name) has no PENSYS partition - the build did not complete. Nothing was written."
+        }
+        Good "image verified as a PenLive layout"
+    }
+
     $tempImage = $null
     if ($imageItem.Extension -eq '.zst') {
         if (-not (Get-Command zstd.exe -ErrorAction SilentlyContinue)) {
