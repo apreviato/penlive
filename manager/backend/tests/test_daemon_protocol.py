@@ -10,9 +10,9 @@ def test_request_roundtrip():
 
 
 def test_response_roundtrip():
-    resp = protocol.Response(ok=True, result={"mountpoint": "/run/bootstack/mounts/x"})
+    resp = protocol.Response(ok=True, result={"mountpoint": "/run/penlive/mounts/x"})
     decoded = protocol.Response.decode(resp.encode())
-    assert decoded.ok and decoded.result["mountpoint"] == "/run/bootstack/mounts/x"
+    assert decoded.ok and decoded.result["mountpoint"] == "/run/penlive/mounts/x"
 
 
 def test_error_response_roundtrip():

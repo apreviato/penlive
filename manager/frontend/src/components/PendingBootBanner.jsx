@@ -11,7 +11,7 @@ export default function PendingBootBanner({ pending, onClear, onReboot }) {
         {exhausted ? (
           <>
             <strong>{pending.image_name}</strong> failed to start {pending.attempts} times and was
-            disabled automatically. BootStack will keep starting normally.
+            disabled automatically. PenLive will keep starting normally.
           </>
         ) : (
           <>

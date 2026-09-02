@@ -1,5 +1,5 @@
 #!/bin/bash
-# Guided end-to-end build of a BootStack USB stick.
+# Guided end-to-end build of a PenLive USB stick.
 #
 #     sudo ./scripts/make-usb.sh
 #
@@ -8,7 +8,7 @@
 # step is skippable when its output already exists, because the live-build stage
 # takes 20-40 minutes and there is no reason to repeat it to reflash a stick.
 #
-# Partitioning is delegated to `bootstack` (builder/) rather than reimplemented
+# Partitioning is delegated to `penlive` (builder/) rather than reimplemented
 # here, so the device guards live in exactly one place.
 set -euo pipefail
 
@@ -17,7 +17,7 @@ LIVE_OUT="${REPO_ROOT}/live/build/out"
 FRONTEND_DIST="${REPO_ROOT}/manager/frontend/dist"
 LOG_FILE="${REPO_ROOT}/make-usb.log"
 
-# Defaults mirror builder/bootstack/disk.py; overridden for small sticks below.
+# Defaults mirror builder/penlive/disk.py; overridden for small sticks below.
 EFI_MIB=512
 SYSTEM_MIB=4096
 PERSIST_MIB=8192
@@ -81,7 +81,7 @@ ask() {
 
 usage() {
     cat <<EOF
-Guided build of a BootStack USB stick.
+Guided build of a PenLive USB stick.
 
     sudo ./scripts/make-usb.sh [options]
 
@@ -119,7 +119,7 @@ done
 : > "${LOG_FILE}"
 
 log ""
-log "${BOLD}BootStack USB builder${RESET}"
+log "${BOLD}PenLive USB builder${RESET}"
 log "${DIM}repository: ${REPO_ROOT}${RESET}"
 
 [[ "$(uname -s)" == "Linux" ]] || die "this script must run on Linux (live-build and the partitioning tools are Linux-only)"
@@ -345,7 +345,7 @@ if [[ ${device_mib} -lt ${needed_mib} ]]; then
             die "device too small for the requested layout"
         fi
     else
-        die "${TARGET_DEVICE} is too small for BootStack (need at least $((needed_mib / 1024)) GiB, 32 GB or larger recommended)"
+        die "${TARGET_DEVICE} is too small for PenLive (need at least $((needed_mib / 1024)) GiB, 32 GB or larger recommended)"
     fi
 fi
 
@@ -353,10 +353,10 @@ data_mib=$((device_mib - fixed_mib))
 
 log ""
 note "$(printf '%-14s %-8s %10s  %s' 'PARTITION' 'FORMAT' 'SIZE' 'CONTENTS')"
-note "$(printf '%-14s %-8s %9sM  %s' 'BOOTEFI'     'fat32'      "${EFI_MIB}"     'GRUB bootloader')"
-note "$(printf '%-14s %-8s %9sM  %s' 'BOOTSYS'     'ext4'       "${SYSTEM_MIB}"  'kernel, squashfs, boot state')"
+note "$(printf '%-14s %-8s %9sM  %s' 'PENEFI'     'fat32'      "${EFI_MIB}"     'GRUB bootloader')"
+note "$(printf '%-14s %-8s %9sM  %s' 'PENSYS'     'ext4'       "${SYSTEM_MIB}"  'kernel, squashfs, boot state')"
 note "$(printf '%-14s %-8s %9sM  %s' 'persistence' 'ext4'       "${PERSIST_MIB}" 'settings, Wi-Fi, keyboard')"
-note "$(printf '%-14s %-8s %9sM  %s' 'BOOTDATA'    "${DATA_FS}" "${data_mib}"    'downloaded ISOs, backups')"
+note "$(printf '%-14s %-8s %9sM  %s' 'PENDATA'    "${DATA_FS}" "${data_mib}"    'downloaded ISOs, backups')"
 log ""
 
 # ---------------------------------------------------------- 6. write ----
@@ -381,7 +381,7 @@ done
 
 if ask "Show the exact command plan first (dry run)?" n; then
     log ""
-    PYTHONPATH="${REPO_ROOT}/builder" python3 -m bootstack.cli install "${TARGET_DEVICE}" \
+    PYTHONPATH="${REPO_ROOT}/builder" python3 -m penlive.cli install "${TARGET_DEVICE}" \
         --dry-run --yes \
         --live-dir "${LIVE_OUT}" \
         --grub-cfg "${REPO_ROOT}/grub/grub.cfg" \
@@ -402,7 +402,7 @@ read -r -p "     ${TARGET_DEVICE} > " typed </dev/tty
 log ""
 info "writing - do not remove the stick"
 
-PYTHONPATH="${REPO_ROOT}/builder" python3 -m bootstack.cli install "${TARGET_DEVICE}" \
+PYTHONPATH="${REPO_ROOT}/builder" python3 -m penlive.cli install "${TARGET_DEVICE}" \
     --yes \
     --live-dir "${LIVE_OUT}" \
     --grub-cfg "${REPO_ROOT}/grub/grub.cfg" \
@@ -418,7 +418,7 @@ sync
 ok "written"
 
 info "verifying"
-if PYTHONPATH="${REPO_ROOT}/builder" python3 -m bootstack.cli validate "${TARGET_DEVICE}" \
+if PYTHONPATH="${REPO_ROOT}/builder" python3 -m penlive.cli validate "${TARGET_DEVICE}" \
         --data-fs "${DATA_FS}" >>"${LOG_FILE}" 2>&1; then
     ok "layout verified"
 else
@@ -428,7 +428,7 @@ fi
 # ---------------------------------------------------------------- done ----
 
 log ""
-log "${GREEN}${BOLD}BootStack is ready on ${TARGET_DEVICE}${RESET}"
+log "${GREEN}${BOLD}PenLive is ready on ${TARGET_DEVICE}${RESET}"
 log ""
 log "  To boot it:"
 log "    1. Leave the stick plugged in and restart the machine"

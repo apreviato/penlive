@@ -9,7 +9,7 @@ from .iso import IsoImage
 class GenericEfiAdapter(BootAdapter):
     """Fallback for any hybrid ISO with its own EFI bootloader (rescue tools,
     unsupported distros, ...): GRUB loopback-mounts the ISO straight off
-    BOOTDATA and chainloads it, instead of us needing to understand its
+    PENDATA and chainloads it, instead of us needing to understand its
     internals. Lowest confidence of the registry so a real adapter always
     wins when one actually matches.
     """

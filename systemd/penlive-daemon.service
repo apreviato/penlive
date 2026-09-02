@@ -1,19 +1,19 @@
 [Unit]
-Description=BootStack privileged daemon (mount, boot state, kexec, USB write)
-Documentation=file:///opt/bootstack/docs/ARCHITECTURE.md
+Description=PenLive privileged daemon (mount, boot state, kexec, USB write)
+Documentation=file:///opt/penlive/docs/ARCHITECTURE.md
 DefaultDependencies=no
 After=local-fs.target
-Before=bootstack-api.service
+Before=penlive-api.service
 
 [Service]
 Type=exec
 # Runs as root by necessity, but its entire API is the fixed command set in
 # app/daemon/protocol.py ALLOWED_COMMANDS — it never evaluates arbitrary input.
-ExecStart=/opt/bootstack/venv/bin/python -m app.daemon
-WorkingDirectory=/opt/bootstack/backend
-Environment=PYTHONPATH=/opt/bootstack/backend:/opt/bootstack/builder
-Environment=BOOTSTACK_SOCKET_GROUP=bootstack
-RuntimeDirectory=bootstack
+ExecStart=/opt/penlive/venv/bin/python -m app.daemon
+WorkingDirectory=/opt/penlive/backend
+Environment=PYTHONPATH=/opt/penlive/backend:/opt/penlive/builder
+Environment=PENLIVE_SOCKET_GROUP=penlive
+RuntimeDirectory=penlive
 RuntimeDirectoryMode=0755
 Restart=on-failure
 RestartSec=2

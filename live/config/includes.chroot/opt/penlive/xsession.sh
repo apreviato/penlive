@@ -3,7 +3,7 @@
 set -e
 
 API_URL="http://127.0.0.1:7777"
-PROFILE_DIR=/var/lib/bootstack/chromium
+PROFILE_DIR=/var/lib/penlive/chromium
 
 # -dontzap is an Xorg server flag, but Ctrl+Alt+Backspace is also controlled at
 # the keymap level; clearing the Terminate action removes the "kill X" escape.
@@ -19,7 +19,7 @@ xset s noblank
 # outside the app.
 command -v unclutter >/dev/null 2>&1 && unclutter -idle 3 &
 
-openbox --config-file /opt/bootstack/openbox-rc.xml &
+openbox --config-file /opt/penlive/openbox-rc.xml &
 OPENBOX_PID=$!
 
 # Restarting Chromium in a loop is what makes the kiosk unescapable: if a user

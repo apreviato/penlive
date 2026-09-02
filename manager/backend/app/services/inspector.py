@@ -14,7 +14,7 @@ from pathlib import Path
 from .. import paths, repo
 from ..adapters import NoAdapterMatched, prepare_boot
 
-log = logging.getLogger("bootstack.inspector")
+log = logging.getLogger("penlive.inspector")
 
 
 def process_downloaded_image(image_id: str, iso_path: Path) -> None:

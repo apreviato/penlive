@@ -22,7 +22,7 @@ from pathlib import Path
 
 CATALOG_PATH = Path(__file__).resolve().parents[1] / "catalog" / "catalog.json"
 TIMEOUT = 60
-USER_AGENT = "bootstack-catalog-updater/1.0"
+USER_AGENT = "penlive-catalog-updater/1.0"
 
 
 def fetch_text(url: str) -> str:

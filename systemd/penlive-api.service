@@ -1,0 +1,31 @@
+[Unit]
+Description=PenLive Manager API (FastAPI)
+After=network.target penlive-daemon.service penlive-aria2.service local-fs.target
+Wants=penlive-aria2.service
+
+[Service]
+Type=exec
+User=penlive
+Group=penlive
+# Unprivileged on purpose: this process parses untrusted input (catalog JSON,
+# ISO internals), so anything privileged is delegated to penlive-daemon over
+# its Unix socket. Bound to loopback — the UI is a local Chromium kiosk.
+ExecStart=/opt/penlive/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 7777
+WorkingDirectory=/opt/penlive/backend
+Environment=PYTHONPATH=/opt/penlive/backend:/opt/penlive/builder
+Restart=on-failure
+RestartSec=2
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths=/data /boot /var/lib/penlive /var/log/penlive
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target

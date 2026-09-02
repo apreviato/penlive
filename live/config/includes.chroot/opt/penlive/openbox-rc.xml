@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Openbox configuration for the BootStack kiosk.
+  Openbox configuration for the PenLive kiosk.
 
   The point of this file is what it does NOT contain: no <keyboard> bindings
   and no <mouse> context menus. Openbox's defaults include Alt+F4 (close),
@@ -39,7 +39,7 @@
     <number>1</number>
     <firstdesk>1</firstdesk>
     <names>
-      <name>BootStack</name>
+      <name>PenLive</name>
     </names>
   </desktops>
 

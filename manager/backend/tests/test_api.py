@@ -64,7 +64,7 @@ def test_download_rejects_unknown_image(client):
 
 def test_download_reports_503_when_aria2_is_down(client):
     """Without this mapping the user sees a bare 'Internal Server Error' when
-    bootstack-aria2 isn't running, with nothing pointing at the real cause."""
+    penlive-aria2 isn't running, with nothing pointing at the real cause."""
     repo.upsert_image_from_catalog(CATALOG_ENTRY)
     resp = client.post("/api/downloads", json={"image_id": "debian-13-live-standard"})
     assert resp.status_code == 503

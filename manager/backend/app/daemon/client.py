@@ -1,4 +1,4 @@
-"""Async client for talking to the root bootstack-daemon over its Unix socket.
+"""Async client for talking to the root penlive-daemon over its Unix socket.
 
 In dev mode (no daemon running, or not on Linux at all) every call raises
 DaemonUnavailable with a clear message instead of hanging or crashing the API
@@ -36,7 +36,7 @@ async def call(cmd: str, **args: Any) -> Any:
     # that can never have the socket in the first place.
     if not HAS_UNIX_SOCKETS:
         raise DaemonUnavailable(
-            "bootstack-daemon is unavailable: this platform has no Unix domain sockets "
+            "penlive-daemon is unavailable: this platform has no Unix domain sockets "
             "(the daemon runs only on the live Linux system)"
         )
 
@@ -45,14 +45,14 @@ async def call(cmd: str, **args: Any) -> Any:
             asyncio.open_unix_connection(path=str(paths.DAEMON_SOCKET)), timeout=3
         )
     except _UNAVAILABLE_ERRORS as exc:
-        raise DaemonUnavailable(f"bootstack-daemon not reachable at {paths.DAEMON_SOCKET}: {exc}") from exc
+        raise DaemonUnavailable(f"penlive-daemon not reachable at {paths.DAEMON_SOCKET}: {exc}") from exc
 
     try:
         writer.write(protocol.Request(cmd=cmd, args=args).encode())
         await writer.drain()
         line = await asyncio.wait_for(reader.readline(), timeout=120)
         if not line:
-            raise DaemonUnavailable("bootstack-daemon closed the connection without responding")
+            raise DaemonUnavailable("penlive-daemon closed the connection without responding")
         resp = protocol.Response.decode(line)
     finally:
         writer.close()

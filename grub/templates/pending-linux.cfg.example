@@ -8,7 +8,7 @@
 
 menuentry "Pending: Ubuntu 24.04.1 LTS installer" --id pending_boot {
     insmod ext2
-    search --no-floppy --set=root --label BOOTSYS
+    search --no-floppy --set=root --label PENSYS
     linux ($root)/boot/extracted/ubuntu-24-04-1/vmlinuz boot=casper iso-scan/filename=/images/ubuntu-24.04.1.iso quiet ---
     initrd ($root)/boot/extracted/ubuntu-24-04-1/initrd
 }

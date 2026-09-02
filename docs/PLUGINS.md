@@ -53,13 +53,13 @@ directly:
 | Provision Machine | Provisioning | **destructive** | `dd` + optional answer-file seed + verify |
 
 Backups are written to `backups/` and recovered files to `recovered/` on the
-BOOTDATA partition, so they survive reboots and a factory reset of the
+PENDATA partition, so they survive reboots and a factory reset of the
 persistence layer.
 
 ## Safety affordances in the UI
 
 - Destructive tools require an explicit "I understand" checkbox before Run is enabled.
-- Device pickers mark BootStack's own partitions with `⚠ BootStack` and show a
+- Device pickers mark PenLive's own partitions with `⚠ PenLive` and show a
   warning when one is selected. They are deliberately **listed rather than
   hidden**: a user doing recovery may legitimately need to inspect the stick,
   but must never image over it by accident.
@@ -98,7 +98,7 @@ daemon runs on a machine booted from a USB stick.
    values to a `JobSpec`.
 3. Register it in `app/plugins/__init__.py` (an explicit list, not filesystem
    autodiscovery — what can run as root should be reviewable in one place).
-4. Add the required binaries to `live/config/package-lists/bootstack.list.chroot`.
+4. Add the required binaries to `live/config/package-lists/penlive.list.chroot`.
 5. `tests/test_plugins.py` automatically checks that every plugin's `JobSpec`
    names a real operation, which catches the typo that would otherwise only
    show up at runtime.

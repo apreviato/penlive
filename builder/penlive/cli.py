@@ -1,9 +1,9 @@
-"""bootstack: partitions, formats and provisions a BootStack live-USB.
+"""penlive: partitions, formats and provisions a PenLive live-USB.
 
-    bootstack devices                          list candidate block devices
-    bootstack install /dev/sdX --live-dir DIR   wipe + provision a real disk
-    bootstack image out.img --live-dir DIR      build a flashable image via a loop device
-    bootstack validate /dev/sdX                 sanity-check an already-provisioned disk
+    penlive devices                          list candidate block devices
+    penlive install /dev/sdX --live-dir DIR   wipe + provision a real disk
+    penlive image out.img --live-dir DIR      build a flashable image via a loop device
+    penlive validate /dev/sdX                 sanity-check an already-provisioned disk
 
 Every subcommand that touches a device supports --dry-run, which runs the
 full command sequence through CommandRunner without executing anything.
@@ -26,15 +26,15 @@ from .runner import CommandRunner
 from .safety import UnsafeTargetError, assert_target_is_safe
 from .verify import validate_mounted_layout
 
-log = logging.getLogger("bootstack")
+log = logging.getLogger("penlive")
 
-DEFAULT_MOUNT_ROOT = Path("/tmp/bootstack-install")
+DEFAULT_MOUNT_ROOT = Path("/tmp/penlive-install")
 
 
 def _require_linux() -> None:
     if platform.system() != "Linux":
         print(
-            "error: bootstack must run on a Linux host with sgdisk/mkfs/grub-mkstandalone "
+            "error: penlive must run on a Linux host with sgdisk/mkfs/grub-mkstandalone "
             f"available (detected {platform.system()}). Use --dry-run to preview the plan "
             "on any OS.",
             file=sys.stderr,
@@ -126,7 +126,7 @@ def cmd_install(args: argparse.Namespace) -> int:
             print(f"  - {p}", file=sys.stderr)
         return 1
 
-    print("bootstack: install complete." if not args.dry_run else "bootstack: dry-run complete, nothing was written.")
+    print("penlive: install complete." if not args.dry_run else "penlive: dry-run complete, nothing was written.")
     return 0
 
 
@@ -152,9 +152,9 @@ def cmd_image(args: argparse.Namespace) -> int:
 
     if args.compress and not args.dry_run:
         final = compress_image(runner, image_path)
-        print(f"bootstack: image ready at {final}")
+        print(f"penlive: image ready at {final}")
     else:
-        print(f"bootstack: image ready at {image_path}")
+        print(f"penlive: image ready at {image_path}")
     return 0
 
 
@@ -166,9 +166,9 @@ def cmd_validate(args: argparse.Namespace) -> int:
     runner = CommandRunner(dry_run=False)
     mount_root = Path(args.mount_root)
 
-    with mounted(runner, disk.partition_path(device, by_label["BOOTEFI"].number), mount_root / "efi", fstype="vfat") as efi_mp, \
-         mounted(runner, disk.partition_path(device, by_label["BOOTSYS"].number), mount_root / "bootsys", fstype="ext4") as bootsys_mp, \
-         mounted(runner, disk.partition_path(device, by_label["BOOTDATA"].number), mount_root / "data", fstype=by_label["BOOTDATA"].fstype) as data_mp:
+    with mounted(runner, disk.partition_path(device, by_label["PENEFI"].number), mount_root / "efi", fstype="vfat") as efi_mp, \
+         mounted(runner, disk.partition_path(device, by_label["PENSYS"].number), mount_root / "bootsys", fstype="ext4") as bootsys_mp, \
+         mounted(runner, disk.partition_path(device, by_label["PENDATA"].number), mount_root / "data", fstype=by_label["PENDATA"].fstype) as data_mp:
         problems = validate_mounted_layout(efi_mp, bootsys_mp, data_mp)
 
     if problems:
@@ -198,7 +198,7 @@ def _add_provision_args(p: argparse.ArgumentParser) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="bootstack")
+    parser = argparse.ArgumentParser(prog="penlive")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_dev = sub.add_parser("devices", help="list candidate block devices")
@@ -213,7 +213,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_install.set_defaults(func=cmd_install)
 
     p_image = sub.add_parser("image", help="build a flashable .img via a loop device")
-    p_image.add_argument("output", help="output path, e.g. dist/bootstack-amd64.img")
+    p_image.add_argument("output", help="output path, e.g. dist/penlive-amd64.img")
     p_image.add_argument("--size-mib", type=int, default=16384, help="total image size (default 16 GiB)")
     p_image.add_argument("--compress", action="store_true", help="zstd-compress the result and remove the raw image")
     _add_layout_args(p_image)

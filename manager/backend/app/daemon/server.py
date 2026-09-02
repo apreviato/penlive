@@ -1,6 +1,6 @@
 """Root-privileged daemon: the only process allowed to mount images, write GRUB
 boot state, reboot the machine, kexec, or dd a downloaded ISO onto a second
-USB. The API runs unprivileged (see systemd/bootstack-api.service) and talks
+USB. The API runs unprivileged (see systemd/penlive-api.service) and talks
 to this over a Unix socket instead of shelling out as root itself, so a bug
 in the API — the part of the stack actually parsing untrusted input like ISO
 contents and catalog JSON — can't do more than this narrow command set
@@ -18,29 +18,29 @@ from pathlib import Path
 from .. import paths
 from . import protocol
 
-log = logging.getLogger("bootstack.daemon")
+log = logging.getLogger("penlive.daemon")
 
-SOCKET_GROUP = os.environ.get("BOOTSTACK_SOCKET_GROUP", "bootstack")
+SOCKET_GROUP = os.environ.get("PENLIVE_SOCKET_GROUP", "penlive")
 
 
 def _builder_safety():
-    """Reuse builder/bootstack's device guardrails instead of re-implementing them.
+    """Reuse builder/penlive's device guardrails instead of re-implementing them.
 
-    In production PYTHONPATH already includes /opt/bootstack/builder (set by
+    In production PYTHONPATH already includes /opt/penlive/builder (set by
     the systemd unit); this fallback lets the daemon run straight from a repo
     checkout during development.
     """
     try:
-        from bootstack.runner import CommandRunner
-        from bootstack.safety import assert_target_is_safe
+        from penlive.runner import CommandRunner
+        from penlive.safety import assert_target_is_safe
     except ImportError:
         for parent in Path(__file__).resolve().parents:
             candidate = parent / "builder"
-            if (candidate / "bootstack" / "safety.py").is_file():
+            if (candidate / "penlive" / "safety.py").is_file():
                 sys.path.insert(0, str(candidate))
                 break
-        from bootstack.runner import CommandRunner
-        from bootstack.safety import assert_target_is_safe
+        from penlive.runner import CommandRunner
+        from penlive.safety import assert_target_is_safe
     return CommandRunner, assert_target_is_safe
 
 
@@ -258,7 +258,7 @@ async def serve(socket_path: Path) -> None:
     except KeyError:
         log.warning("group %r not found; socket left root-only", SOCKET_GROUP)
 
-    log.info("bootstack-daemon listening on %s", socket_path)
+    log.info("penlive-daemon listening on %s", socket_path)
     async with server:
         await server.serve_forever()
 
@@ -266,7 +266,7 @@ async def serve(socket_path: Path) -> None:
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     if os.geteuid() != 0:
-        raise SystemExit("bootstack-daemon must run as root")
+        raise SystemExit("penlive-daemon must run as root")
     asyncio.run(serve(paths.DAEMON_SOCKET))
 
 

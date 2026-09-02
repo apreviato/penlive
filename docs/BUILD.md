@@ -78,20 +78,20 @@ dependências já resolvidas — o sistema live precisa funcionar sem rede.
 ## 3a. Gravar direto num pendrive
 
 ```bash
-sudo PYTHONPATH=builder python -m bootstack.cli devices
+sudo PYTHONPATH=builder python -m penlive.cli devices
 ```
 
 **Sempre rode o dry-run primeiro.** Ele imprime a sequência exata de comandos
 sem executar nada:
 
 ```bash
-sudo PYTHONPATH=builder python -m bootstack.cli install /dev/sdb --dry-run --live-dir live/build/out
+sudo PYTHONPATH=builder python -m penlive.cli install /dev/sdb --dry-run --live-dir live/build/out
 ```
 
 Conferido o plano:
 
 ```bash
-sudo PYTHONPATH=builder python -m bootstack.cli install /dev/sdb --live-dir live/build/out
+sudo PYTHONPATH=builder python -m penlive.cli install /dev/sdb --live-dir live/build/out
 ```
 
 Ele exige que você digite `/dev/sdb` para confirmar. As guardas recusam nome de
@@ -103,7 +103,7 @@ Opções úteis: `--data-fs ext4` (se o pendrive nunca vai ver Windows),
 Verificar depois:
 
 ```bash
-sudo PYTHONPATH=builder python -m bootstack.cli validate /dev/sdb
+sudo PYTHONPATH=builder python -m penlive.cli validate /dev/sdb
 ```
 
 ## 3b. Gerar uma imagem distribuível
@@ -111,11 +111,11 @@ sudo PYTHONPATH=builder python -m bootstack.cli validate /dev/sdb
 Não toca em disco físico nenhum — monta tudo num loop device:
 
 ```bash
-sudo PYTHONPATH=builder python -m bootstack.cli image dist/bootstack-amd64.img \
+sudo PYTHONPATH=builder python -m penlive.cli image dist/penlive-amd64.img \
     --size-mib 16384 --live-dir live/build/out --compress
 ```
 
-Resultado: `dist/bootstack-amd64.img.zst`, que o usuário final grava com
+Resultado: `dist/penlive-amd64.img.zst`, que o usuário final grava com
 Rufus, balenaEtcher ou `dd`.
 
 ## 4. Testar em QEMU (faça isso antes do hardware)
@@ -132,12 +132,12 @@ Ou contra a imagem, sem pendrive:
 ```bash
 sudo qemu-system-x86_64 -enable-kvm -m 4096 -smp 2 \
     -bios /usr/share/ovmf/OVMF.fd \
-    -drive file=dist/bootstack-amd64.img,format=raw,if=virtio
+    -drive file=dist/penlive-amd64.img,format=raw,if=virtio
 ```
 
 Roteiro mínimo de validação:
 
-1. GRUB aparece e "BootStack Manager" boota.
+1. GRUB aparece e "PenLive Manager" boota.
 2. Chromium sobe fullscreen na tela de rede (sem desktop visível).
 3. Conectar no Wi-Fi (ou usar a rede do QEMU) e chegar no catálogo.
 4. Baixar uma ISO; matar a VM em ~50% e reiniciar — o download deve retomar.
@@ -165,11 +165,11 @@ python tools/update_catalog.py --write
 **GRUB não aparece / máquina ignora o pendrive** — Secure Boot precisa estar
 desativado (ainda não suportado). Confirme também que o boot é UEFI, não legacy.
 
-**GRUB abre mas não acha o kernel** — o label `BOOTSYS` não bateu.
-`sudo blkid /dev/sdb2` deve mostrar `LABEL="BOOTSYS"`.
+**GRUB abre mas não acha o kernel** — o label `PENSYS` não bateu.
+`sudo blkid /dev/sdb2` deve mostrar `LABEL="PENSYS"`.
 
-**Sobe em modo texto, sem Chromium** — `journalctl -u bootstack-kiosk` e
-`journalctl -u bootstack-api`. Quase sempre é `manager/frontend/dist` ausente na
+**Sobe em modo texto, sem Chromium** — `journalctl -u penlive-kiosk` e
+`journalctl -u penlive-api`. Quase sempre é `manager/frontend/dist` ausente na
 hora do build.
 
 **Sistema baixado não boota** — quase sempre `cmdline` do adapter. Use a entrada

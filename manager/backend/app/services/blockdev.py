@@ -4,7 +4,7 @@ Goes through the daemon's `list_block_devices` operation rather than running
 lsblk here, so the API keeps its "no privileged subprocesses" property even
 though lsblk itself is harmless.
 
-BootStack's own partitions are flagged rather than hidden: a user doing
+PenLive's own partitions are flagged rather than hidden: a user doing
 recovery work may legitimately want to inspect them, but the UI must be able
 to warn loudly before anyone images over the stick they booted from.
 """
@@ -16,13 +16,13 @@ from typing import Any
 
 from ..daemon import client as daemon_client
 
-log = logging.getLogger("bootstack.blockdev")
+log = logging.getLogger("penlive.blockdev")
 
-BOOTSTACK_LABELS = {"BOOTEFI", "BOOTSYS", "BOOTDATA", "persistence"}
+PENLIVE_LABELS = {"PENEFI", "PENSYS", "PENDATA", "persistence"}
 
 
 async def inventory() -> dict[str, list[dict[str, Any]]]:
-    """Returns {"disks": [...], "partitions": [...]} with BootStack members flagged."""
+    """Returns {"disks": [...], "partitions": [...]} with PenLive members flagged."""
     try:
         result = await daemon_client.call("run_operation", operation="list_block_devices", args={})
     except daemon_client.DaemonUnavailable:
@@ -40,9 +40,9 @@ async def inventory() -> dict[str, list[dict[str, Any]]]:
     disks: list[dict[str, Any]] = []
     partitions: list[dict[str, Any]] = []
 
-    def walk(node: dict[str, Any], parent_is_bootstack: bool = False) -> bool:
+    def walk(node: dict[str, Any], parent_is_penlive: bool = False) -> bool:
         label = node.get("label") or ""
-        is_bootstack = parent_is_bootstack or label in BOOTSTACK_LABELS
+        is_penlive = parent_is_penlive or label in PENLIVE_LABELS
         entry = {
             "path": node.get("path"),
             "name": node.get("name"),
@@ -58,19 +58,19 @@ async def inventory() -> dict[str, list[dict[str, Any]]]:
         }
 
         # Evaluate every child before combining: `any(walk(c) ...)` would
-        # short-circuit on the first BootStack partition and silently drop the
-        # siblings after it, which on a real stick means BOOTSYS, persistence
-        # and BOOTDATA all disappear from the device list.
+        # short-circuit on the first PenLive partition and silently drop the
+        # siblings after it, which on a real stick means PENSYS, persistence
+        # and PENDATA all disappear from the device list.
         children = node.get("children") or []
-        child_flags = [walk(c, is_bootstack) for c in children]
-        is_bootstack = is_bootstack or any(child_flags)
-        entry["bootstack"] = is_bootstack
+        child_flags = [walk(c, is_penlive) for c in children]
+        is_penlive = is_penlive or any(child_flags)
+        entry["penlive"] = is_penlive
 
         if node.get("type") == "disk":
             disks.append(entry)
         elif node.get("type") == "part":
             partitions.append(entry)
-        return is_bootstack
+        return is_penlive
 
     for node in tree.get("blockdevices", []):
         walk(node)

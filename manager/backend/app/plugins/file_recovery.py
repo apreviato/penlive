@@ -10,7 +10,7 @@ class FileRecoveryPlugin(Plugin):
     name = "Deleted File Recovery"
     description = (
         "Carve deleted files off a drive with PhotoRec and save them to the "
-        "BootStack stick. Reads the source only - it is never written to."
+        "PenLive stick. Reads the source only - it is never written to."
     )
     category = "recovery"
     danger = "safe"
@@ -22,14 +22,14 @@ class FileRecoveryPlugin(Plugin):
             name="device",
             label="Source drive or partition",
             type="device",
-            help="Scanned read-only. Recovered files are written to the BootStack stick, never back to the source.",
+            help="Scanned read-only. Recovered files are written to the PenLive stick, never back to the source.",
         ),
         Param(
             name="name",
             label="Save results as",
             type="text",
             default="recovery",
-            help="A folder of this name is created under recovered/ on the BootStack stick.",
+            help="A folder of this name is created under recovered/ on the PenLive stick.",
         ),
         Param(
             name="filetype",

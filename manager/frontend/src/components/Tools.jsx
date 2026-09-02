@@ -61,8 +61,8 @@ export default function Tools() {
       {!daemonAvailable && !loading && (
         <div className="banner banner-warning">
           The privileged helper is not running, so tools cannot be started. On a real
-          BootStack stick it starts automatically; check{' '}
-          <code>systemctl status bootstack-daemon</code>.
+          PenLive stick it starts automatically; check{' '}
+          <code>systemctl status penlive-daemon</code>.
         </div>
       )}
 

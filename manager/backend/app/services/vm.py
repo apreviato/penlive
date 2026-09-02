@@ -1,7 +1,7 @@
 """'Run VM' action: boot a downloaded ISO under QEMU/KVM without touching the host boot chain.
 
 Runs directly from the unprivileged API process, not through the root
-daemon: /dev/kvm access only needs the bootstack user in the `kvm` group
+daemon: /dev/kvm access only needs the penlive user in the `kvm` group
 (granted by live/config/hooks), not root, and there's no reason to run a
 GUI-spawning subprocess as root.
 """
@@ -12,7 +12,7 @@ import logging
 import shutil
 from pathlib import Path
 
-log = logging.getLogger("bootstack.vm")
+log = logging.getLogger("penlive.vm")
 
 _running: dict[str, asyncio.subprocess.Process] = {}
 
@@ -35,7 +35,7 @@ async def start(image_id: str, iso_path: str, *, memory_mib: int, cpus: int, ena
 
     args = [
         qemu_bin,
-        "-name", f"bootstack-{image_id}",
+        "-name", f"penlive-{image_id}",
         "-m", str(memory_mib),
         "-smp", str(cpus),
         "-cdrom", iso_path,

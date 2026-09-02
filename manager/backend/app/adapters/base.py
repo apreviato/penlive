@@ -19,12 +19,12 @@ class BootConfig:
     method: str  # "linux" | "chainload"
     label: str
     # "linux" method: filenames only, relative to the per-image extract_dir
-    # bootmanager.py placed them in — it decides the final BOOTSYS-absolute
+    # bootmanager.py placed them in — it decides the final PENSYS-absolute
     # path (boot/extracted/<image_id>/<filename>), adapters don't need to know it.
     kernel: str | None = None
     initrd: str | None = None
     cmdline: str | None = None
-    # Path on BOOTDATA, relative to that partition's root, e.g. "images/x.iso".
+    # Path on PENDATA, relative to that partition's root, e.g. "images/x.iso".
     iso_rel_path: str | None = None
     # "chainload" method only: path to the ISO's own EFI loader, e.g. "EFI/BOOT/BOOTX64.EFI".
     efi_chain_path: str | None = None

@@ -4,10 +4,10 @@
 set -e
 
 systemctl enable NetworkManager.service
-systemctl enable bootstack-daemon.service
-systemctl enable bootstack-aria2.service
-systemctl enable bootstack-api.service
-systemctl enable bootstack-kiosk.service
+systemctl enable penlive-daemon.service
+systemctl enable penlive-aria2.service
+systemctl enable penlive-api.service
+systemctl enable penlive-kiosk.service
 
 # No display manager: the kiosk unit starts X itself on tty1.
 systemctl set-default multi-user.target

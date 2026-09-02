@@ -22,7 +22,7 @@ export default function StatusBar({ sysinfo, network, onOpenNetwork, onOpenKeybo
     <header className="statusbar">
       <div className="statusbar-brand">
         <span className="brand-mark">▣</span>
-        <span className="brand-name">BootStack</span>
+        <span className="brand-name">PenLive</span>
       </div>
 
       <div className="statusbar-items">
@@ -40,7 +40,7 @@ export default function StatusBar({ sysinfo, network, onOpenNetwork, onOpenKeybo
         </button>
 
         {storage && (
-          <div className="status-item static" title="Free space on the BootStack stick">
+          <div className="status-item static" title="Free space on the PenLive stick">
             <span className="status-icon">▤</span>
             <span className="status-label">{formatBytes(storage.free)} free</span>
           </div>

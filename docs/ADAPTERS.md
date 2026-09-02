@@ -1,6 +1,6 @@
 # Boot adapters
 
-Um adapter ensina o BootStack a bootar uma família de ISOs. É o ponto de
+Um adapter ensina o PenLive a bootar uma família de ISOs. É o ponto de
 extensão principal do projeto.
 
 ## Interface
@@ -39,7 +39,7 @@ BootConfig(
     kernel="vmlinuz",            # nome do arquivo dentro de extract_dir
     initrd="initrd",
     cmdline="boot=casper iso-scan/filename=/images/x.iso quiet ---",
-    iso_rel_path="images/x.iso", # caminho relativo à raiz de BOOTDATA
+    iso_rel_path="images/x.iso", # caminho relativo à raiz de PENDATA
 )
 ```
 
@@ -67,7 +67,7 @@ dela. Não extrai nada. Fallback para ISOs híbridas sem adapter dedicado.
 | `ubuntu` | `/casper/vmlinuz` | 95 | `boot=casper iso-scan/filename=` |
 | `debian` | `/live/vmlinuz` | 90 | `boot=live findiso=` |
 | `proxmox` | `/boot/linux26` | 90 | `ro ramdisk_size=... findiso=` |
-| `fedora` | `/images/pxeboot/vmlinuz` | 85 | `inst.stage2=hd:LABEL=BOOTDATA:` |
+| `fedora` | `/images/pxeboot/vmlinuz` | 85 | `inst.stage2=hd:LABEL=PENDATA:` |
 | `arch` | `/arch/boot/x86_64/vmlinuz-linux` | 85 | `img_dev=... img_loop=` |
 | `generic` | `/EFI/BOOT/BOOTX64.EFI` | 10 | chainload |
 
@@ -100,7 +100,7 @@ class MinhaDistroAdapter(BootAdapter):
             label="Minha Distro",
             kernel=kernel.name,
             initrd=initrd.name,
-            cmdline=f"root=live:CDLABEL=BOOTDATA iso={iso_rel_path}",
+            cmdline=f"root=live:CDLABEL=PENDATA iso={iso_rel_path}",
             iso_rel_path=iso_rel_path,
         )
 ```

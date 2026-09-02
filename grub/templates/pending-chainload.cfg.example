@@ -1,10 +1,10 @@
 # Reference only — see pending-linux.cfg.example. This is what the
 # "chainload" boot method (GenericEFIAdapter) produces for hybrid ISOs we
 # don't have a dedicated adapter for: GRUB loopback-mounts the ISO straight
-# off BOOTDATA and chainloads its own EFI bootloader, instead of extracting
-# a kernel/initrd. Needs the `exfat` module since BOOTDATA is exFAT and GRUB
+# off PENDATA and chainloads its own EFI bootloader, instead of extracting
+# a kernel/initrd. Needs the `exfat` module since PENDATA is exFAT and GRUB
 # itself must read the ISO bytes here (unlike the "linux" method, where only
-# the already-booted target kernel ever touches BOOTDATA).
+# the already-booted target kernel ever touches PENDATA).
 
 menuentry "Pending: GParted Live (generic EFI chainload)" --id pending_boot {
     insmod ext2
@@ -12,9 +12,9 @@ menuentry "Pending: GParted Live (generic EFI chainload)" --id pending_boot {
     insmod loopback
     insmod iso9660
     insmod chain
-    search --no-floppy --set=root --label BOOTSYS
+    search --no-floppy --set=root --label PENSYS
     set isofile="/images/gparted-live.iso"
-    search --no-floppy --set=dataroot --label BOOTDATA
+    search --no-floppy --set=dataroot --label PENDATA
     loopback loop ($dataroot)$isofile
     chainloader (loop)/EFI/BOOT/BOOTX64.EFI
 }

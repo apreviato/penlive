@@ -1,7 +1,7 @@
 """Minimal aria2 JSON-RPC client.
 
 aria2c itself runs as its own long-lived systemd service (see
-systemd/bootstack-aria2.service) so downloads keep going even if the API
+systemd/penlive-aria2.service) so downloads keep going even if the API
 process restarts — this module only talks to its RPC port. Kept separate
 from downloader.py so the wire protocol and the "resume + verify + rename"
 business logic don't tangle. Reference: https://aria2.github.io/manual/en/html/aria2c.html#rpc-interface
@@ -39,7 +39,7 @@ async def _call(method: str, params: list[Any]) -> Any:
     except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout) as exc:
         raise Aria2Unavailable(
             f"The download engine (aria2) is not reachable at {paths.ARIA2_RPC_URL}. "
-            "Check the bootstack-aria2 service."
+            "Check the penlive-aria2 service."
         ) from exc
     except httpx.HTTPStatusError as exc:
         raise Aria2Error(f"aria2 returned HTTP {exc.response.status_code}") from exc

@@ -70,7 +70,7 @@ def linux_repair(args: dict) -> Iterator[str]:
         args, "action", {"reinstall_grub", "update_initramfs", "both"}, default="reinstall_grub"
     )
 
-    target = Path(tempfile.mkdtemp(prefix="bootstack-repair-"))
+    target = Path(tempfile.mkdtemp(prefix="penlive-repair-"))
     try:
         yield f"Mounting {root_device} at {target}"
         yield from _mount_chroot(root_device, target, esp_device)
@@ -125,8 +125,8 @@ def windows_repair(args: dict) -> Iterator[str]:
         return
 
     esp_device = require_device(args, "esp_device")
-    win_mount = Path(tempfile.mkdtemp(prefix="bootstack-win-"))
-    esp_mount = Path(tempfile.mkdtemp(prefix="bootstack-esp-"))
+    win_mount = Path(tempfile.mkdtemp(prefix="penlive-win-"))
+    esp_mount = Path(tempfile.mkdtemp(prefix="penlive-esp-"))
     try:
         yield f"Mounting Windows partition {windows_device}"
         yield from _run(["mount", "-t", "ntfs-3g", windows_device, str(win_mount)])
@@ -201,7 +201,7 @@ def provision_apply(args: dict) -> Iterator[str]:
         yield from _run(["partprobe", target_device], check=False)
         yield from _run(["udevadm", "settle"], check=False)
 
-        mount_point = Path(tempfile.mkdtemp(prefix="bootstack-seed-"))
+        mount_point = Path(tempfile.mkdtemp(prefix="penlive-seed-"))
         first_partition = f"{target_device}p1" if target_device[-1].isdigit() else f"{target_device}1"
         try:
             yield from _run(["mount", first_partition, str(mount_point)])

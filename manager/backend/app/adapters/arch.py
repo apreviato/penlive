@@ -30,6 +30,6 @@ class ArchAdapter(BootAdapter):
             label="Arch Linux",
             kernel=kernel.name,
             initrd=initrd.name,
-            cmdline=f"img_dev=/dev/disk/by-label/BOOTDATA img_loop=/{iso_rel_path} earlymodules=loop",
+            cmdline=f"img_dev=/dev/disk/by-label/PENDATA img_loop=/{iso_rel_path} earlymodules=loop",
             iso_rel_path=iso_rel_path,
         )

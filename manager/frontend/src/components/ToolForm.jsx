@@ -4,7 +4,7 @@ import { formatBytes } from '../format.js';
 
 /* Renders a plugin's parameter schema as a form.
 
-   Device pickers are the important part: they mark BootStack's own partitions
+   Device pickers are the important part: they mark PenLive's own partitions
    explicitly, because the single worst outcome here is a user imaging over the
    stick they are currently running from. */
 
@@ -55,13 +55,13 @@ function DeviceSelect({ param, value, onChange, devices, loading }) {
         {filtered.map((d) => (
           <option key={d.path} value={d.path}>
             {describeDevice(d)}
-            {d.bootstack ? '  ⚠ BootStack' : ''}
+            {d.penlive ? '  ⚠ PenLive' : ''}
           </option>
         ))}
       </select>
-      {value && filtered.find((d) => d.path === value)?.bootstack && (
+      {value && filtered.find((d) => d.path === value)?.penlive && (
         <div className="banner banner-error" style={{ marginTop: 10 }}>
-          That is part of the BootStack stick you are running from. Choosing it can
+          That is part of the PenLive stick you are running from. Choosing it can
           destroy this system while it is in use.
         </div>
       )}

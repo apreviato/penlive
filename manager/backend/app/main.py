@@ -1,5 +1,5 @@
-"""FastAPI entrypoint. Runs as the unprivileged `bootstack` user (see
-systemd/bootstack-api.service) — anything that needs root goes through
+"""FastAPI entrypoint. Runs as the unprivileged `penlive` user (see
+systemd/penlive-api.service) — anything that needs root goes through
 app.daemon.client instead of being done here directly.
 """
 from __future__ import annotations
@@ -19,7 +19,7 @@ from .routers import (
 )
 from .services import catalog, downloader, keyboard
 
-log = logging.getLogger("bootstack.api")
+log = logging.getLogger("penlive.api")
 
 FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 
@@ -38,7 +38,7 @@ async def lifespan(app: FastAPI):
 
 async def _seed_catalog_on_startup() -> None:
     if paths.OFFLINE:
-        log.info("BOOTSTACK_OFFLINE set; skipping catalog refresh")
+        log.info("PENLIVE_OFFLINE set; skipping catalog refresh")
         return
     try:
         await catalog.refresh()
@@ -46,7 +46,7 @@ async def _seed_catalog_on_startup() -> None:
         log.warning("initial catalog refresh failed; serving cached/bundled catalog only", exc_info=True)
 
 
-app = FastAPI(title="BootStack Manager", lifespan=lifespan)
+app = FastAPI(title="PenLive Manager", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

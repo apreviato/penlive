@@ -24,6 +24,6 @@ class FedoraAdapter(BootAdapter):
             label="Fedora",
             kernel=kernel.name,
             initrd=initrd.name,
-            cmdline=f"inst.stage2=hd:LABEL=BOOTDATA:/{iso_rel_path} quiet",
+            cmdline=f"inst.stage2=hd:LABEL=PENDATA:/{iso_rel_path} quiet",
             iso_rel_path=iso_rel_path,
         )

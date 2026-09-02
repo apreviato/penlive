@@ -1,6 +1,6 @@
 import pytest
 
-from bootstack import disk
+from penlive import disk
 
 
 def test_partition_path_sd():
@@ -15,7 +15,7 @@ def test_partition_path_nvme():
 def test_default_layout_labels_and_types():
     layout = disk.default_layout()
     labels = [p.label for p in layout.partitions]
-    assert labels == ["BOOTEFI", "BOOTSYS", "persistence", "BOOTDATA"]
+    assert labels == ["PENEFI", "PENSYS", "persistence", "PENDATA"]
     assert layout.partitions[0].fstype == "fat32"
     assert layout.partitions[-1].size_mib is None
 

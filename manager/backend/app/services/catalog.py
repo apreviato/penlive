@@ -12,7 +12,7 @@ import httpx
 
 from .. import paths, repo
 
-log = logging.getLogger("bootstack.catalog")
+log = logging.getLogger("penlive.catalog")
 
 
 def _load_json(path: Path | None) -> dict[str, Any] | None:

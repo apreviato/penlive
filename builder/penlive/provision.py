@@ -1,5 +1,5 @@
-"""Shared provisioning flow used by both `bootstack install` (real device) and
-`bootstack image` (loop device backed by a sparse file).
+"""Shared provisioning flow used by both `penlive install` (real device) and
+`penlive image` (loop device backed by a sparse file).
 """
 from __future__ import annotations
 
@@ -30,11 +30,11 @@ def provision(
 ) -> list[str]:
     """Formats already-created partitions on `device` and populates them. Returns validation problems (empty = OK)."""
     by_label = {p.label: p for p in layout.partitions}
-    efi_dev = partition_path(device, by_label["BOOTEFI"].number)
-    bootsys_dev = partition_path(device, by_label["BOOTSYS"].number)
+    efi_dev = partition_path(device, by_label["PENEFI"].number)
+    bootsys_dev = partition_path(device, by_label["PENSYS"].number)
     persist_dev = partition_path(device, by_label["persistence"].number)
-    data_dev = partition_path(device, by_label["BOOTDATA"].number)
-    data_fstype = by_label["BOOTDATA"].fstype
+    data_dev = partition_path(device, by_label["PENDATA"].number)
+    data_fstype = by_label["PENDATA"].fstype
 
     efi_mount = mount_root / "efi"
     bootsys_mount = mount_root / "bootsys"

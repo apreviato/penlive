@@ -1,9 +1,9 @@
 """Single source of truth for filesystem locations.
 
-BOOT_MOUNT/DATA_MOUNT correspond to the BOOTSYS/BOOTDATA partitions from
-builder/bootstack/disk.py, mounted by fstab on a real device (see
-live/config/includes.chroot/etc/fstab). Off a real BootStack device — i.e.
-whenever we're not on Linux, or BOOTSTACK_DEV=1 is set — everything resolves
+BOOT_MOUNT/DATA_MOUNT correspond to the PENSYS/PENDATA partitions from
+builder/penlive/disk.py, mounted by fstab on a real device (see
+live/config/includes.chroot/etc/fstab). Off a real PenLive device — i.e.
+whenever we're not on Linux, or PENLIVE_DEV=1 is set — everything resolves
 under ./devdata instead, so the API and frontend can be run and clicked
 through without root or a provisioned USB.
 """
@@ -13,23 +13,23 @@ import os
 import platform
 from pathlib import Path
 
-DEV_MODE = platform.system() != "Linux" or os.environ.get("BOOTSTACK_DEV") == "1"
+DEV_MODE = platform.system() != "Linux" or os.environ.get("PENLIVE_DEV") == "1"
 
 if DEV_MODE:
-    _ROOT = Path(os.environ.get("BOOTSTACK_DEV_ROOT", Path(__file__).resolve().parents[3] / "devdata"))
+    _ROOT = Path(os.environ.get("PENLIVE_DEV_ROOT", Path(__file__).resolve().parents[3] / "devdata"))
     BOOT_MOUNT = _ROOT / "boot"
     DATA_MOUNT = _ROOT / "data"
-    VAR_LIB = _ROOT / "var-lib-bootstack"
-    LOG_DIR = _ROOT / "log-bootstack"
-    DAEMON_SOCKET = _ROOT / "bootstack-daemon.sock"
+    VAR_LIB = _ROOT / "var-lib-penlive"
+    LOG_DIR = _ROOT / "log-penlive"
+    DAEMON_SOCKET = _ROOT / "penlive-daemon.sock"
     MOUNTS_DIR = _ROOT / "mounts"
 else:
     BOOT_MOUNT = Path("/boot")
     DATA_MOUNT = Path("/data")
-    VAR_LIB = Path("/var/lib/bootstack")
-    LOG_DIR = Path("/var/log/bootstack")
-    DAEMON_SOCKET = Path("/run/bootstack/daemon.sock")
-    MOUNTS_DIR = Path("/run/bootstack/mounts")
+    VAR_LIB = Path("/var/lib/penlive")
+    LOG_DIR = Path("/var/log/penlive")
+    DAEMON_SOCKET = Path("/run/penlive/daemon.sock")
+    MOUNTS_DIR = Path("/run/penlive/mounts")
 
 STATE_DIR = BOOT_MOUNT / "state"
 EXTRACTED_DIR = BOOT_MOUNT / "extracted"
@@ -49,7 +49,7 @@ def _find_bundled_catalog() -> Path | None:
     """Locate the catalog shipped inside the image, for offline first boot.
 
     The repo checkout and the staged live system nest this file at different
-    depths (manager/backend/app/ vs /opt/bootstack/backend/app/), so counting
+    depths (manager/backend/app/ vs /opt/penlive/backend/app/), so counting
     `.parents[N]` is silently wrong in one of them. Search named candidates
     instead.
     """
@@ -63,15 +63,15 @@ def _find_bundled_catalog() -> Path | None:
 
 BUNDLED_CATALOG = _find_bundled_catalog()
 
-ARIA2_RPC_URL = os.environ.get("BOOTSTACK_ARIA2_RPC", "http://127.0.0.1:6800/jsonrpc")
+ARIA2_RPC_URL = os.environ.get("PENLIVE_ARIA2_RPC", "http://127.0.0.1:6800/jsonrpc")
 DEFAULT_CATALOG_URL = os.environ.get(
-    "BOOTSTACK_CATALOG_URL",
-    "https://raw.githubusercontent.com/bootstack-project/catalog/main/catalog.json",
+    "PENLIVE_CATALOG_URL",
+    "https://raw.githubusercontent.com/penlive-project/catalog/main/catalog.json",
 )
 
 # Skips the catalog fetch at startup. Set by the test suite so tests neither
 # depend on internet access nor pay a network round-trip per app instance.
-OFFLINE = os.environ.get("BOOTSTACK_OFFLINE") == "1"
+OFFLINE = os.environ.get("PENLIVE_OFFLINE") == "1"
 
 
 def ensure_dirs() -> None:

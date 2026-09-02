@@ -1,0 +1,14 @@
+#!/bin/sh
+# The API and kiosk run as this unprivileged user; only penlive-daemon is root.
+set -e
+
+groupadd --system penlive || true
+useradd --system --gid penlive --create-home --home-dir /var/lib/penlive \
+        --shell /usr/sbin/nologin penlive || true
+
+# kvm: lets the API launch QEMU with /dev/kvm without root (see services/vm.py).
+# netdev: lets it drive NetworkManager over D-Bus for Wi-Fi setup.
+adduser penlive kvm || true
+adduser penlive netdev || true
+
+install -d -o penlive -g penlive /var/lib/penlive /var/log/penlive

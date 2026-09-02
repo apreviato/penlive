@@ -83,7 +83,7 @@ def test_prepare_generic_produces_chainload_without_extracting(tmp_path):
 
 
 def test_cmdline_embeds_the_iso_path_it_was_given(tmp_path):
-    """The ISO path in the cmdline must be the one on BOOTDATA, not the
+    """The ISO path in the cmdline must be the one on PENDATA, not the
     temporary path we inspected — getting this wrong boots to a kernel panic
     because the target OS can't find its own root filesystem."""
     iso_path = build_iso(tmp_path / "ubuntu.iso", UBUNTU_FILES)

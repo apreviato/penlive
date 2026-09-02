@@ -1,13 +1,13 @@
 [Unit]
-Description=BootStack kiosk UI (X + Chromium)
-After=bootstack-api.service
-Wants=bootstack-api.service
+Description=PenLive kiosk UI (X + Chromium)
+After=penlive-api.service
+Wants=penlive-api.service
 Conflicts=getty@tty1.service
 
 [Service]
 Type=simple
-User=bootstack
-Group=bootstack
+User=penlive
+Group=penlive
 PAMName=login
 TTYPath=/dev/tty1
 TTYReset=yes
@@ -16,7 +16,7 @@ StandardInput=tty
 StandardOutput=journal
 # kiosk.sh polls /api/health before launching Chromium, so a slow API start
 # shows nothing rather than a browser error page.
-ExecStart=/opt/bootstack/kiosk.sh
+ExecStart=/opt/penlive/kiosk.sh
 Restart=always
 RestartSec=3
 

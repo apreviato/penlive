@@ -1,11 +1,11 @@
 #!/bin/bash
-# Builds the Debian Live root filesystem for BootStack.
+# Builds the Debian Live root filesystem for PenLive.
 #
 # Must run on a Debian/Ubuntu host as root, with live-build installed:
 #     sudo apt install live-build
 #     sudo ./live/build.sh
 #
-# Output (consumed by builder/bootstack via --live-dir):
+# Output (consumed by builder/penlive via --live-dir):
 #     live/build/out/vmlinuz
 #     live/build/out/initrd.img
 #     live/build/out/filesystem.squashfs
@@ -33,12 +33,12 @@ cp -r "${LIVE_DIR}/config" "${BUILD_DIR}/"
 # Stage the manager into includes.chroot so the squashfs ships with the app.
 # The frontend must be built first (npm run build) — the API serves its dist/
 # as static files, so a missing dist means a live system with no UI.
-STAGE="${BUILD_DIR}/config/includes.chroot/opt/bootstack"
+STAGE="${BUILD_DIR}/config/includes.chroot/opt/penlive"
 echo "==> staging manager into ${STAGE}"
 mkdir -p "${STAGE}/backend" "${STAGE}/builder" "${STAGE}/docs"
 cp -r "${REPO_ROOT}/manager/backend/app" "${STAGE}/backend/"
 cp "${REPO_ROOT}/manager/backend/requirements.txt" "${STAGE}/backend/"
-cp -r "${REPO_ROOT}/builder/bootstack" "${STAGE}/builder/"
+cp -r "${REPO_ROOT}/builder/penlive" "${STAGE}/builder/"
 cp -r "${REPO_ROOT}/catalog" "${STAGE}/"
 for doc in ARCHITECTURE PLUGINS BUILD ADAPTERS; do
     cp "${REPO_ROOT}/docs/${doc}.md" "${STAGE}/docs/" 2>/dev/null || true
@@ -57,7 +57,7 @@ UNITS="${BUILD_DIR}/config/includes.chroot/etc/systemd/system"
 mkdir -p "${UNITS}"
 cp "${REPO_ROOT}"/systemd/*.service "${UNITS}/"
 
-chmod +x "${BUILD_DIR}/config/includes.chroot/opt/bootstack/"*.sh
+chmod +x "${BUILD_DIR}/config/includes.chroot/opt/penlive/"*.sh
 chmod +x "${BUILD_DIR}/config/hooks/live/"*.hook.chroot
 chmod +x "${BUILD_DIR}/auto/config"
 

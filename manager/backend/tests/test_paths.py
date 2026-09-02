@@ -1,7 +1,7 @@
 """Path-resolution guards.
 
 The repo checkout and the staged live system nest the app at different depths
-(manager/backend/app/ vs /opt/bootstack/backend/app/), so any `.parents[N]`
+(manager/backend/app/ vs /opt/penlive/backend/app/), so any `.parents[N]`
 index that is right in one is wrong in the other. These bugs are invisible in
 development and only appear on the real device, so they get explicit tests.
 """

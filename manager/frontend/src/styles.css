@@ -1,4 +1,4 @@
-/* BootStack kiosk UI.
+/* PenLive kiosk UI.
    Presents as an appliance, not a web page: a persistent status bar, tabs, and
    no browser chrome. The user is often standing at an unfamiliar machine with
    only a trackpad, so nothing is smaller than ~40px and nothing depends on

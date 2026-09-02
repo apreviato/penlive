@@ -5,7 +5,7 @@ LIVE_OUT  := $(REPO_ROOT)/live/build/out
 DIST      := $(REPO_ROOT)/dist
 
 help:
-	@echo "BootStack targets:"
+	@echo "PenLive targets:"
 	@echo "  make usb             guided end-to-end USB build  [Linux + root]  <- start here"
 	@echo ""
 	@echo "  make frontend        build the React kiosk UI (required before 'make live')"
@@ -46,7 +46,7 @@ live: frontend
 	sudo ./live/build.sh
 
 image:
-	sudo python -m bootstack.cli image $(DIST)/bootstack-amd64.img \
+	sudo python -m penlive.cli image $(DIST)/penlive-amd64.img \
 		--live-dir $(LIVE_OUT) \
 		--grub-cfg grub/grub.cfg \
 		--recovery-cfg grub/recovery.cfg \
@@ -54,7 +54,7 @@ image:
 		--compress
 
 dev-api:
-	cd manager/backend && BOOTSTACK_DEV=1 python -m uvicorn app.main:app --reload --port 7777
+	cd manager/backend && PENLIVE_DEV=1 python -m uvicorn app.main:app --reload --port 7777
 
 dev-ui:
 	cd manager/frontend && npm run dev

@@ -1,4 +1,4 @@
-"""Populates BOOTSYS (live kernel/squashfs), persistence, and BOOTDATA (skeleton dirs)."""
+"""Populates PENSYS (live kernel/squashfs), persistence, and PENDATA (skeleton dirs)."""
 from __future__ import annotations
 
 from pathlib import Path

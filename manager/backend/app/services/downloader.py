@@ -18,7 +18,7 @@ from .. import paths, repo
 from . import aria2
 from .inspector import process_downloaded_image
 
-log = logging.getLogger("bootstack.downloader")
+log = logging.getLogger("penlive.downloader")
 
 POLL_INTERVAL_SECONDS = 1.0
 _active: dict[str, asyncio.Task] = {}
@@ -135,7 +135,7 @@ async def resume_watchers() -> None:
     notice it finished.
     """
     if paths.OFFLINE:
-        log.info("BOOTSTACK_OFFLINE set; skipping download-watcher resume")
+        log.info("PENLIVE_OFFLINE set; skipping download-watcher resume")
         return
     try:
         active = await aria2.tell_active()

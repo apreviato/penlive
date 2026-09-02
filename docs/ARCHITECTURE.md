@@ -7,27 +7,27 @@ faz; aqui está o raciocínio que não sobrevive em comentários.
 
 ```
 UEFI
- └─ EFI/BOOT/BOOTX64.EFI          (GRUB standalone, na partição BOOTEFI)
-     └─ configfile → BOOTSYS/boot/grub/grub.cfg
-         ├─ menuentry "BootStack Manager"        (padrão)
+ └─ EFI/BOOT/BOOTX64.EFI          (GRUB standalone, na partição PENEFI)
+     └─ configfile → PENSYS/boot/grub/grub.cfg
+         ├─ menuentry "PenLive Manager"        (padrão)
          ├─ source boot/state/nextboot.cfg       (se existir e attempts < 3)
          └─ source boot/grub/recovery.cfg        (sempre)
              └─ vmlinuz + initrd → live-boot
-                 ├─ BOOTSYS/live/filesystem.squashfs   (read-only)
+                 ├─ PENSYS/live/filesystem.squashfs   (read-only)
                  └─ partição LABEL=persistence         (OverlayFS, gravável)
                      └─ systemd
                          ├─ NetworkManager
-                         ├─ bootstack-daemon   (root, socket Unix)
-                         ├─ bootstack-aria2    (usuário bootstack)
-                         ├─ bootstack-api      (usuário bootstack, :7777)
-                         └─ bootstack-kiosk    (X + Chromium fullscreen)
+                         ├─ penlive-daemon   (root, socket Unix)
+                         ├─ penlive-aria2    (usuário penlive)
+                         ├─ penlive-api      (usuário penlive, :7777)
+                         └─ penlive-kiosk    (X + Chromium fullscreen)
 ```
 
 ### Por que o GRUB embutido é mínimo
 
 `grub-mkstandalone` gera um `BOOTX64.EFI` autossuficiente, mas regravá-lo é
 chato. Então o config embutido faz só duas coisas: achar a partição pelo label
-`BOOTSYS` e dar `configfile` no `grub.cfg` de verdade. Toda a lógica de menu
+`PENSYS` e dar `configfile` no `grub.cfg` de verdade. Toda a lógica de menu
 vive num arquivo comum numa partição ext4 — atualizar o menu é sobrescrever um
 arquivo, não reconstruir o binário EFI.
 
@@ -40,7 +40,7 @@ O GRUB não tem operador de incremento nem `rm`. Isso moldou duas coisas:
    Manager inicia normalmente. Um `cmdline` errado gerado por um adapter não
    deixa o usuário preso num loop de boot.
 2. "Cancelar pending boot" pelo GRUB **não apaga** o arquivo — o GRUB não
-   consegue. Ele boota o Manager com `bootstack.clear_pending=1` e quem apaga é
+   consegue. Ele boota o Manager com `penlive.clear_pending=1` e quem apaga é
    o daemon, já dentro do Linux.
 
 `recovery.cfg` é sourced incondicionalmente **no fim** do `grub.cfg`, depois de
@@ -51,24 +51,24 @@ anterior falhar.
 
 | # | Label | FS | Tamanho | Conteúdo |
 |---|---|---|---|---|
-| 1 | `BOOTEFI` | FAT32 | 512 M | `EFI/BOOT/BOOTX64.EFI` |
-| 2 | `BOOTSYS` | ext4 | 4 G | `live/` + `boot/state/` + `boot/extracted/` |
+| 1 | `PENEFI` | FAT32 | 512 M | `EFI/BOOT/BOOTX64.EFI` |
+| 2 | `PENSYS` | ext4 | 4 G | `live/` + `boot/state/` + `boot/extracted/` |
 | 3 | `persistence` | ext4 | 8 G | OverlayFS do live-boot |
-| 4 | `BOOTDATA` | exFAT | resto | `images/`, `catalog/`, `logs/` |
+| 4 | `PENDATA` | exFAT | resto | `images/`, `catalog/`, `logs/` |
 
 Três decisões que valem explicação:
 
-**`boot/state` fica em BOOTSYS (ext4), não em BOOTDATA (exFAT).** O GRUB lê o
+**`boot/state` fica em PENSYS (ext4), não em PENDATA (exFAT).** O GRUB lê o
 `nextboot.cfg` direto da partição crua, antes de existir Linux ou OverlayFS. O
 suporte a ext4 no GRUB é muito mais testado que o de exfat, e não vale arriscar
 a cadeia de boot inteira nisso.
 
-**BOOTDATA é exFAT mesmo assim.** É a partição que o usuário enxerga ao plugar
+**PENDATA é exFAT mesmo assim.** É a partição que o usuário enxerga ao plugar
 o pendrive em qualquer Windows/macOS/Linux para copiar uma ISO na mão. Nada que
 o GRUB precise ler no boot mora lá — exceto no método `chainload`, que é
 justamente por isso o único a dar `insmod exfat`.
 
-**ISOs ≠ persistência.** Downloads vão para `BOOTDATA`, estado do sistema vai
+**ISOs ≠ persistência.** Downloads vão para `PENDATA`, estado do sistema vai
 para `persistence`. Um factory reset (formatar `persistence`, recriar
 `persistence.conf`) preserva todos os downloads. Se as ISOs morassem no overlay,
 resetar o sistema custaria dezenas de GB de re-download.
@@ -76,11 +76,11 @@ resetar o sistema custaria dezenas de GB de re-download.
 ## Separação de privilégios
 
 ```
-Chromium kiosk  (usuário bootstack)
+Chromium kiosk  (usuário penlive)
       │ HTTP localhost:7777
-bootstack-api   (usuário bootstack)  ← parseia entrada não-confiável
+penlive-api   (usuário penlive)  ← parseia entrada não-confiável
       │ socket Unix, JSON por linha
-bootstack-daemon (root)              ← lista fixa de comandos
+penlive-daemon (root)              ← lista fixa de comandos
 ```
 
 A API é quem processa entrada não-confiável: JSON de catálogo remoto e o
@@ -99,7 +99,7 @@ acontece nos dois lados — o cliente recusa um comando fora da lista antes mesm
 de abrir o socket, e o servidor recusa de novo ao receber. Um teste garante que
 `ALLOWED_COMMANDS` e os handlers implementados não divirjam.
 
-`write_usb` reaproveita as guardas de `builder/bootstack/safety.py` em vez de
+`write_usb` reaproveita as guardas de `builder/penlive/safety.py` em vez de
 reimplementá-las: recusa nome de partição, recusa o disco do sistema em
 execução.
 
@@ -167,7 +167,7 @@ primeiro que responder "talvez". Há teste cobrindo exatamente esse conflito.
 
 Dois métodos de saída:
 
-- **`linux`** — extrai kernel/initrd da ISO para `BOOTSYS/boot/extracted/<id>/`
+- **`linux`** — extrai kernel/initrd da ISO para `PENSYS/boot/extracted/<id>/`
   e monta um `menuentry` que passa a ISO original como root via `findiso=`,
   `iso-scan/filename=`, `inst.stage2=`, etc. Muito mais previsível que
   chainload, porque não depende do bootloader interno da ISO.
@@ -185,7 +185,7 @@ não exige root. Root só entra bem depois, no botão "Montar".
 `aria2c` roda como **serviço systemd próprio**, não como filho da API. Um
 download de 3 GB precisa sobreviver a um restart da API; no startup,
 `downloader.resume_watchers()` reconecta aos GIDs ainda ativos. O arquivo
-parcial e o controle `.aria2` ficam em `BOOTDATA`, que é persistido — então
+parcial e o controle `.aria2` ficam em `PENDATA`, que é persistido — então
 retomar depois de desligar a máquina funciona de verdade.
 
 Ordem que garante que "existe em `images/`" signifique "confiável":
@@ -201,7 +201,7 @@ como pronto para bootar.
 ## Catálogo
 
 `catalog.json` aponta direto para os servidores oficiais das distros — o projeto
-não hospeda ISO nenhuma. Ordem de fallback: remoto → cache em `BOOTDATA` →
+não hospeda ISO nenhuma. Ordem de fallback: remoto → cache em `PENDATA` →
 cópia embutida na squashfs. Offline, a UI ainda mostra o catálogo.
 
 Manter hash na mão é como esse tipo de catálogo apodrece: a distro lança um
@@ -214,7 +214,7 @@ fornecedores realmente usam (`hash  arquivo`, com `*` binário, e o estilo BSD
 ## Modo de desenvolvimento
 
 `app/paths.py` decide, em tempo de import, se está no sistema live. Fora dele
-(ou com `BOOTSTACK_DEV=1`), tudo aponta para `./devdata/` e as operações
+(ou com `PENLIVE_DEV=1`), tudo aponta para `./devdata/` e as operações
 privilegiadas retornam `503` em vez de estourar. É o que permite desenvolver a
 UI inteira em Windows/macOS sem pendrive e sem root.
 

@@ -12,7 +12,7 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
-log = logging.getLogger("bootstack.runner")
+log = logging.getLogger("penlive.runner")
 
 
 class CommandError(RuntimeError):

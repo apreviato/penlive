@@ -35,7 +35,7 @@ export default function SetupWizard({ networkStatus, onNetworkChanged, onFinish,
     <div className="setup">
       <div className="setup-head">
         <h1 className="setup-title">
-          {reason === 'offline' ? 'You are offline' : 'Welcome to BootStack'}
+          {reason === 'offline' ? 'You are offline' : 'Welcome to PenLive'}
         </h1>
         <p className="setup-blurb">
           {reason === 'offline'

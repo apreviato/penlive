@@ -1,4 +1,4 @@
-# BootStack
+# PenLive
 
 Um pendrive que **é** um gerenciador de sistemas operacionais: liga o computador,
 conecta no Wi-Fi, escolhe um sistema de um catálogo, baixa, verifica e boota —
@@ -14,7 +14,7 @@ UEFI → GRUB → Debian Live (SquashFS + OverlayFS) → FastAPI + Chromium kios
 
 | Camada | Estado |
 |---|---|
-| `bootstack` CLI (particiona GPT, formata, instala GRUB, provisiona) | pronto, com `--dry-run` |
+| `penlive` CLI (particiona GPT, formata, instala GRUB, provisiona) | pronto, com `--dry-run` |
 | GRUB: boot manager, pending boot, watchdog de 3 tentativas, recovery | pronto |
 | Debian `live-build` (pacotes, hooks, systemd, kiosk) | pronto |
 | Backend FastAPI + SQLite | pronto |
@@ -43,7 +43,7 @@ cd manager/frontend && npm ci && npm run build
 ```
 
 ```bash
-cd manager/backend && BOOTSTACK_DEV=1 python -m uvicorn app.main:app --port 7777
+cd manager/backend && PENLIVE_DEV=1 python -m uvicorn app.main:app --port 7777
 ```
 
 Abra <http://127.0.0.1:7777>. O catálogo carrega da cópia local em
@@ -55,7 +55,7 @@ mostrando o motivo em cada caso.
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│ ▣ BootStack   ● HomeWifi 192.168.1.42  ⌨ BR  ▤ 127 GB  09:41 ⏻│
+│ ▣ PenLive   ● HomeWifi 192.168.1.42  ⌨ BR  ▤ 127 GB  09:41 ⏻│
 ├──────────────────────────────────────────────────────────────┤
 │  Systems  │  Tools  │  Settings                              │
 └──────────────────────────────────────────────────────────────┘
@@ -77,7 +77,7 @@ Windows Repair · Deleted File Recovery · Provision Machine
 
 Todas gerenciadas pela interface, com console de saída ao vivo e cancelamento.
 Ações destrutivas exigem confirmação explícita, e as partições do próprio
-pendrive aparecem marcadas com `⚠ BootStack`.
+pendrive aparecem marcadas com `⚠ PenLive`.
 
 Um plugin **não** consegue ampliar o que o sistema faz: ele produz o *nome* de
 uma operação mais argumentos estruturados, e quem monta a linha de comando é o
@@ -126,14 +126,14 @@ Os passos manuais, e como testar em QEMU antes de usar hardware real, estão em
 
 ```
 GPT
-├── p1  BOOTEFI      FAT32   512M   EFI/BOOT/BOOTX64.EFI
-├── p2  BOOTSYS      ext4    4G     live/ (kernel, initrd, squashfs) + boot/state + boot/extracted
+├── p1  PENEFI      FAT32   512M   EFI/BOOT/BOOTX64.EFI
+├── p2  PENSYS      ext4    4G     live/ (kernel, initrd, squashfs) + boot/state + boot/extracted
 ├── p3  persistence  ext4    8G     OverlayFS (live-boot) — configurações, Wi-Fi
-└── p4  BOOTDATA     exFAT   resto  images/ (ISOs), catalog/, logs/
+└── p4  PENDATA     exFAT   resto  images/ (ISOs), catalog/, logs/
 ```
 
-ISOs ficam em `BOOTDATA`, **separadas** da persistência: resetar o sistema
-(factory reset) não apaga nenhum download. `BOOTDATA` é exFAT para que o
+ISOs ficam em `PENDATA`, **separadas** da persistência: resetar o sistema
+(factory reset) não apaga nenhum download. `PENDATA` é exFAT para que o
 pendrive possa ser usado em Windows/macOS para copiar ISOs manualmente.
 
 ## Documentação

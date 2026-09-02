@@ -1,7 +1,7 @@
-"""Builds the standalone EFI GRUB binary and installs boot configs onto BOOTSYS.
+"""Builds the standalone EFI GRUB binary and installs boot configs onto PENSYS.
 
 The embedded config baked into BOOTX64.EFI is intentionally tiny: its only
-job is to find the BOOTSYS partition by label and hand off to the real
+job is to find the PENSYS partition by label and hand off to the real
 grub.cfg living there. That way updating GRUB's menu logic later is just
 overwriting a file on an ext4 partition, not re-running grub-mkstandalone.
 """
@@ -12,7 +12,7 @@ from pathlib import Path
 from .runner import CommandRunner
 
 EMBEDDED_CFG = """\
-search --no-floppy --set=root --label BOOTSYS
+search --no-floppy --set=root --label PENSYS
 set prefix=($root)/boot/grub
 configfile ($root)/boot/grub/grub.cfg
 """

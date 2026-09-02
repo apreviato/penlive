@@ -1,6 +1,6 @@
 """Builds the GRUB pending-boot snippet from a BootConfig and publishes it via the daemon.
 
-GRUB reads /boot/state directly off the raw BOOTSYS partition before Linux or
+GRUB reads /boot/state directly off the raw PENSYS partition before Linux or
 the OverlayFS persistence layer exist, so this never touches the sqlite DB
 for the snippet itself — only the daemon's atomic write to that partition is
 the source of truth GRUB sees. See grub/grub.cfg for the watchdog that reads
@@ -25,7 +25,7 @@ def _linux_menuentry(cfg: BootConfig, image_id: str, label: str) -> str:
     return (
         f'menuentry "Pending: {label}" --id pending_boot {{\n'
         f"    insmod ext2\n"
-        f"    search --no-floppy --set=root --label BOOTSYS\n"
+        f"    search --no-floppy --set=root --label PENSYS\n"
         f"    linux ($root)/{kernel_path} {cfg.cmdline}\n"
         f"    initrd ($root)/{initrd_path}\n"
         f"}}\n"
@@ -40,9 +40,9 @@ def _chainload_menuentry(cfg: BootConfig, label: str) -> str:
         f"    insmod loopback\n"
         f"    insmod iso9660\n"
         f"    insmod chain\n"
-        f"    search --no-floppy --set=root --label BOOTSYS\n"
+        f"    search --no-floppy --set=root --label PENSYS\n"
         f'    set isofile="/{cfg.iso_rel_path}"\n'
-        f"    search --no-floppy --set=dataroot --label BOOTDATA\n"
+        f"    search --no-floppy --set=dataroot --label PENDATA\n"
         f"    loopback loop ($dataroot)$isofile\n"
         f"    chainloader (loop)/{cfg.efi_chain_path}\n"
         f"}}\n"

@@ -1,8 +1,8 @@
 from pathlib import Path
 
-from bootstack.disk import default_layout
-from bootstack.provision import ProvisionInputs, provision
-from bootstack.runner import CommandRunner
+from penlive.disk import default_layout
+from penlive.provision import ProvisionInputs, provision
+from penlive.runner import CommandRunner
 
 
 def _inputs(tmp_path: Path) -> ProvisionInputs:

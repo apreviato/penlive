@@ -5,8 +5,8 @@ from pathlib import Path
 # Set before any `app` import: paths.py reads these at module import time.
 # Tests must not depend on internet access, and must not pay a network
 # round-trip for every FastAPI app instance they create.
-os.environ.setdefault("BOOTSTACK_DEV", "1")
-os.environ.setdefault("BOOTSTACK_OFFLINE", "1")
+os.environ.setdefault("PENLIVE_DEV", "1")
+os.environ.setdefault("PENLIVE_OFFLINE", "1")
 
 import pytest  # noqa: E402
 

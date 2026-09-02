@@ -1,11 +1,11 @@
 [Unit]
-Description=BootStack aria2 download engine (JSON-RPC)
+Description=PenLive aria2 download engine (JSON-RPC)
 After=network.target local-fs.target
 
 [Service]
 Type=exec
-User=bootstack
-Group=bootstack
+User=penlive
+Group=penlive
 # Its own service, not a child of the API: a download must survive an API
 # restart or crash. app/services/downloader.resume_watchers() re-attaches to
 # whatever is still running here on the next API startup.
@@ -31,7 +31,7 @@ RestartSec=2
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict
-ReadWritePaths=/data /var/log/bootstack
+ReadWritePaths=/data /var/log/penlive
 ProtectHome=yes
 ProtectKernelTunables=yes
 RestrictSUIDSGID=yes

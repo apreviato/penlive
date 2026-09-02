@@ -55,7 +55,7 @@ def assert_target_is_safe(device: str, *, allow_system_disk: bool = False) -> No
         raise UnsafeTargetError(
             f"{device!r} doesn't look like a whole-disk device node. Expected a real "
             "lowercase node with no partition suffix, e.g. /dev/sdb, /dev/nvme0n1 or "
-            "/dev/mmcblk0. Run 'bootstack devices' to list candidates."
+            "/dev/mmcblk0. Run 'penlive devices' to list candidates."
         )
 
     sysdisk = running_system_disk()

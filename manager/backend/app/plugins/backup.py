@@ -19,7 +19,7 @@ class BackupPlugin(Plugin):
     id = "backup"
     name = "Backup Partition"
     description = (
-        "Create an image of a partition on the BootStack stick. Filesystem-aware "
+        "Create an image of a partition on the PenLive stick. Filesystem-aware "
         "backups copy only used blocks, so they are far smaller and faster than a "
         "full sector copy."
     )
@@ -40,7 +40,7 @@ class BackupPlugin(Plugin):
             label="Backup name",
             type="text",
             default="backup",
-            help="Saved under backups/ on the BootStack stick.",
+            help="Saved under backups/ on the PenLive stick.",
         ),
         Param(
             name="fstype",

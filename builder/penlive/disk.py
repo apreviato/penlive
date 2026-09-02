@@ -1,16 +1,16 @@
-"""GPT partition planning and application for a BootStack USB.
+"""GPT partition planning and application for a PenLive USB.
 
 Layout (see docs/ARCHITECTURE.md section "Particionamento"):
 
-    p1  BOOTEFI      FAT32   512 MiB   EFI System Partition
-    p2  BOOTSYS      ext4    4096 MiB  GRUB cfg + boot state + kernel/initrd + squashfs
+    p1  PENEFI      FAT32   512 MiB   EFI System Partition
+    p2  PENSYS      ext4    4096 MiB  GRUB cfg + boot state + kernel/initrd + squashfs
     p3  persistence  ext4    8192 MiB  Debian live-boot OverlayFS upper dir
-    p4  BOOTDATA      exfat  rest      ISO images, downloads, catalog cache
+    p4  PENDATA      exfat  rest      ISO images, downloads, catalog cache
 
-BOOTSYS (not BOOTDATA) holds /boot/state and /boot/extracted because GRUB
+PENSYS (not PENDATA) holds /boot/state and /boot/extracted because GRUB
 reads those directly off the raw partition before Linux/OverlayFS ever come
 up, and GRUB's ext4 support is far more battle-tested than its exfat support.
-BOOTDATA is exfat purely so a plain Windows/macOS/Linux host can drop ISO
+PENDATA is exfat purely so a plain Windows/macOS/Linux host can drop ISO
 files onto it directly; nothing GRUB needs to read at boot time lives there.
 """
 from __future__ import annotations
@@ -54,10 +54,10 @@ def default_layout(
 ) -> DiskLayout:
     return DiskLayout(
         partitions=(
-            Partition(1, "BOOTEFI", "fat32", efi_mib, gpt_type="ef00"),
-            Partition(2, "BOOTSYS", "ext4", system_mib, gpt_type="8300"),
+            Partition(1, "PENEFI", "fat32", efi_mib, gpt_type="ef00"),
+            Partition(2, "PENSYS", "ext4", system_mib, gpt_type="8300"),
             Partition(3, "persistence", "ext4", persist_mib, gpt_type="8300"),
-            Partition(4, "BOOTDATA", data_fs, None, gpt_type="0700" if data_fs == "exfat" else "8300"),
+            Partition(4, "PENDATA", data_fs, None, gpt_type="0700" if data_fs == "exfat" else "8300"),
         )
     )
 

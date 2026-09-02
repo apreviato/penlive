@@ -1,9 +1,9 @@
-"""Sanity checks against a finished BootStack USB — run after install and before shipping an image."""
+"""Sanity checks against a finished PenLive USB — run after install and before shipping an image."""
 from __future__ import annotations
 
 from pathlib import Path
 
-REQUIRED_BOOTSYS_FILES = (
+REQUIRED_PENSYS_FILES = (
     "live/vmlinuz",
     "live/initrd.img",
     "live/filesystem.squashfs",
@@ -20,7 +20,7 @@ def validate_mounted_layout(efi_mount: Path, bootsys_mount: Path, data_mount: Pa
     for rel in REQUIRED_EFI_FILES:
         if not (efi_mount / rel).exists():
             problems.append(f"missing {efi_mount / rel}")
-    for rel in REQUIRED_BOOTSYS_FILES:
+    for rel in REQUIRED_PENSYS_FILES:
         if not (bootsys_mount / rel).exists():
             problems.append(f"missing {bootsys_mount / rel}")
     for rel in REQUIRED_DATA_DIRS:

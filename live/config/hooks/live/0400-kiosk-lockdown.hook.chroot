@@ -18,7 +18,7 @@ systemctl mask autovt@.service
 
 # Stop logind from spawning a getty on demand when a VT is switched to.
 mkdir -p /etc/systemd/logind.conf.d
-cat > /etc/systemd/logind.conf.d/10-bootstack-kiosk.conf <<'EOF'
+cat > /etc/systemd/logind.conf.d/10-penlive-kiosk.conf <<'EOF'
 [Login]
 # No getty is created when an unused VT is activated.
 NAutoVTs=0
@@ -38,7 +38,7 @@ systemctl mask ctrl-alt-del.target
 # --- 3. X server zap ------------------------------------------------------
 # Ctrl+Alt+Backspace kills the X server, dropping the user to a bare console.
 mkdir -p /etc/X11/xorg.conf.d
-cat > /etc/X11/xorg.conf.d/10-bootstack-nozap.conf <<'EOF'
+cat > /etc/X11/xorg.conf.d/10-penlive-nozap.conf <<'EOF'
 Section "ServerFlags"
     Option "DontZap" "true"
 EndSection
@@ -47,4 +47,4 @@ EOF
 # --- 4. Console noise -----------------------------------------------------
 # Kernel messages printed over the kiosk look like a crash to a normal user.
 mkdir -p /etc/sysctl.d
-echo "kernel.printk = 3 3 3 3" > /etc/sysctl.d/20-bootstack-quiet.conf
+echo "kernel.printk = 3 3 3 3" > /etc/sysctl.d/20-penlive-quiet.conf

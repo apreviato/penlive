@@ -31,7 +31,7 @@ class ProvisioningPlugin(Plugin):
             name="target_device",
             label="Target disk",
             type="device",
-            help="The ENTIRE disk is erased. The BootStack stick itself and the running system disk are refused.",
+            help="The ENTIRE disk is erased. The PenLive stick itself and the running system disk are refused.",
         ),
         Param(
             name="verify",

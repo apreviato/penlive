@@ -1,6 +1,6 @@
 import pytest
 
-from bootstack.safety import UnsafeTargetError, assert_target_is_safe, base_disk, confirm_or_raise
+from penlive.safety import UnsafeTargetError, assert_target_is_safe, base_disk, confirm_or_raise
 
 
 def test_base_disk_sd():

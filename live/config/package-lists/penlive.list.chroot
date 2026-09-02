@@ -1,4 +1,4 @@
-# Packages installed into the BootStack live system.
+# Packages installed into the PenLive live system.
 # One per line; live-build passes these to apt inside the chroot.
 
 # --- init / base ---
