@@ -2,11 +2,12 @@
 <!--
   Openbox configuration for the PenLive kiosk.
 
-  The point of this file is what it does NOT contain: no <keyboard> bindings
-  and no <mouse> context menus. Openbox's defaults include Alt+F4 (close),
-  Alt+Tab (switch), W-d (show desktop) and a right-click root menu — all of
-  which let a user escape the browser and reach a shell. Declaring the
-  sections empty replaces those defaults rather than adding to them.
+  Openbox's defaults include Alt+F4 (close), Alt+Tab (switch), W-d (show
+  desktop) and a right-click root menu — all of which let a user escape the
+  browser and reach a shell. The <mouse> section is empty to drop those
+  defaults; the <keyboard> section instead binds every escape key to a no-op,
+  because an empty section only removes Openbox's own bindings and leaves the
+  key free for Chromium to act on.
 
   This is the layer a web page cannot provide: Chromium never sees Alt+F4,
   because the window manager consumes it first.
@@ -52,23 +53,80 @@
 
   <!-- Explicit no-op bindings consume shortcuts before Chromium sees them.
        An empty section merely removes Openbox's defaults; it does not stop the
-       browser from handling Alt+F4, Ctrl+N, Ctrl+L, and similar shortcuts. -->
+       browser from handling Alt+F4, Ctrl+N, Ctrl+J, and similar shortcuts.
+
+       This is the outermost of the three layers that keep the manager on
+       screen. Chromium's managed policy (etc/chromium/policies/managed) is the
+       second: anything that does slip through has nowhere to navigate to.
+       manager/frontend/src/kiosk.js is the third, inside the page.
+
+       Ctrl+C, Ctrl+D and Ctrl+L are deliberately NOT grabbed: the Terminal tab
+       binds them to interrupt, EOF and clear, and none of them can take the
+       user out of the app: in kiosk mode Ctrl+L has no address bar to focus.
+       The zoom keys are left alone for the same reason. -->
   <keyboard>
     <keybind key="A-F4"><action name="Execute"><command>/bin/true</command></action></keybind>
     <keybind key="A-Tab"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="A-S-Tab"><action name="Execute"><command>/bin/true</command></action></keybind>
     <keybind key="W-d"><action name="Execute"><command>/bin/true</command></action></keybind>
-    <keybind key="C-f"><action name="Execute"><command>/bin/true</command></action></keybind>
-    <keybind key="C-l"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="W-e"><action name="Execute"><command>/bin/true</command></action></keybind>
     <keybind key="C-n"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="C-S-n"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="C-t"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="C-S-t"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="C-w"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="C-S-w"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="C-q"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="C-S-q"><action name="Execute"><command>/bin/true</command></action></keybind>
     <keybind key="C-o"><action name="Execute"><command>/bin/true</command></action></keybind>
     <keybind key="C-p"><action name="Execute"><command>/bin/true</command></action></keybind>
-    <keybind key="C-r"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="C-S-p"><action name="Execute"><command>/bin/true</command></action></keybind>
     <keybind key="C-s"><action name="Execute"><command>/bin/true</command></action></keybind>
-    <keybind key="C-t"><action name="Execute"><command>/bin/true</command></action></keybind>
-    <keybind key="C-w"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="C-r"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="C-S-r"><action name="Execute"><command>/bin/true</command></action></keybind>
     <keybind key="F5"><action name="Execute"><command>/bin/true</command></action></keybind>
-    <keybind key="F11"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="C-F5"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="S-F5"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="C-f"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="F3"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="C-g"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="C-S-g"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="C-h"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="C-j"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="C-S-o"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="C-S-b"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="C-S-m"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="C-S-a"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="C-S-Delete"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="C-u"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="C-S-i"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="C-S-j"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="C-S-c"><action name="Execute"><command>/bin/true</command></action></keybind>
     <keybind key="F12"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="S-Escape"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="A-e"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="A-f"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="F1"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="F6"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="F7"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="F10"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="F11"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="A-Left"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="A-Right"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="A-Home"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="C-Tab"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="C-S-Tab"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="C-Next"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="C-Prior"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="C-1"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="C-2"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="C-3"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="C-4"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="C-5"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="C-6"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="C-7"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="C-8"><action name="Execute"><command>/bin/true</command></action></keybind>
+    <keybind key="C-9"><action name="Execute"><command>/bin/true</command></action></keybind>
   </keyboard>
 
   <!-- Empty on purpose: no root menu, no titlebar actions, no window dragging. -->

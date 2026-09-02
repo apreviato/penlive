@@ -1,4 +1,56 @@
 {
+  "_comment_navigation": [
+    "URLAllowlist takes precedence over URLBlocklist, so the two entries below",
+    "are the only pages the kiosk browser can reach at all. This is the layer",
+    "that keeps the manager on screen: even when a shortcut slips past Openbox,",
+    "Ctrl+J, Ctrl+H, Ctrl+U, F12 and view-source have nowhere to navigate to.",
+    "If loading.html ever moves, this allowlist entry has to move with it or the",
+    "kiosk will boot to a blocked page. The directory is allowed alongside the",
+    "exact URL purely as a hedge: nothing under /opt/penlive is secret, and the",
+    "cost of getting the file:// match wrong is a stick that boots to nothing."
+  ],
+  "URLAllowlist": [
+    "http://127.0.0.1:7777",
+    "file:///opt/penlive/loading.html",
+    "file:///opt/penlive/"
+  ],
+  "URLBlocklist": [
+    "chrome://*",
+    "chrome-untrusted://*",
+    "chrome-search://*",
+    "chrome-extension://*",
+    "devtools://*",
+    "view-source:*",
+    "file://*",
+    "ftp://*"
+  ],
+
+  "_comment_startup": "Any window Chromium opens on its own lands on the loading page, which forwards to the manager once the API answers — never on a blank tab.",
+  "RestoreOnStartup": 4,
+  "RestoreOnStartupURLs": ["file:///opt/penlive/loading.html"],
+  "HomepageLocation": "file:///opt/penlive/loading.html",
+  "ShowHomeButton": false,
+
+  "_comment_shortcuts": "Each of these turns one browser keyboard shortcut into a no-op: Ctrl+Shift+N, F12/Ctrl+Shift+I/J, Ctrl+J/Ctrl+S, Ctrl+P, Ctrl+O, Ctrl+Shift+M, Ctrl+D/Ctrl+Shift+O, Shift+Esc.",
+  "IncognitoModeAvailability": 1,
+  "DeveloperToolsAvailability": 2,
+  "DownloadRestrictions": 3,
+  "PromptForDownloadLocation": false,
+  "PrintingEnabled": false,
+  "AllowFileSelectionDialogs": false,
+  "BrowserAddPersonEnabled": false,
+  "BrowserGuestModeEnabled": false,
+  "EditBookmarksEnabled": false,
+  "BookmarkBarEnabled": false,
+  "TaskManagerEndProcessEnabled": false,
+
+  "_comment_interstitials": "An offline kiosk must never show a full-page Safe Browsing or search-engine interstitial: it reads as the manager having crashed.",
+  "SafeBrowsingEnabled": false,
+  "DefaultSearchProviderEnabled": false,
+  "DefaultPopupsSetting": 2,
+  "DefaultNotificationsSetting": 2,
+  "DefaultGeolocationSetting": 2,
+
   "PasswordManagerEnabled": false,
   "PasswordLeakDetectionEnabled": false,
   "AutofillAddressEnabled": false,

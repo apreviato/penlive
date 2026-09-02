@@ -10,6 +10,8 @@ reboots by the live-boot OverlayFS persistence).
 from __future__ import annotations
 
 import asyncio
+import time
+
 from .. import paths, repo
 from ..daemon import client as daemon_client
 from ..schemas import NetworkStatus, WifiNetwork
@@ -39,14 +41,51 @@ async def scan() -> list[WifiNetwork]:
     return sorted(seen.values(), key=lambda network: network.signal, reverse=True)
 
 
+# The status bar polls this every 15 seconds, and the first screen the kiosk
+# paints asks for it twice at once (once for the status bar, once via
+# /api/setup/state). The daemon behind it answers one request at a time and
+# shells out to nmcli, so without this those pile up into a visible wait.
+_STATUS_TTL_SECONDS = 3.0
+_status_cache: tuple[float, NetworkStatus] | None = None
+_status_lock = asyncio.Lock()
+
+
 async def status() -> NetworkStatus:
-    try:
-        return NetworkStatus(**(await _daemon_call("network_status")))
-    except NetworkUnavailable:
-        return NetworkStatus(connected=False)
+    global _status_cache
+
+    fresh = _cached_status()
+    if fresh is not None:
+        return fresh
+
+    async with _status_lock:
+        # Whoever held the lock has just refreshed it; don't queue a second
+        # identical round trip behind theirs.
+        fresh = _cached_status()
+        if fresh is not None:
+            return fresh
+        try:
+            result = NetworkStatus(**(await _daemon_call("network_status")))
+        except NetworkUnavailable:
+            result = NetworkStatus(connected=False)
+        _status_cache = (time.monotonic(), result)
+        return result
+
+
+def _cached_status() -> NetworkStatus | None:
+    cached = _status_cache
+    if cached is None or time.monotonic() - cached[0] >= _STATUS_TTL_SECONDS:
+        return None
+    return cached[1]
 
 
 async def connect(ssid: str, password: str | None) -> NetworkStatus:
+    global _status_cache
+
     payload = await _daemon_call("network_connect", ssid=ssid, password=password or "")
     await asyncio.to_thread(repo.touch_network, ssid)
-    return NetworkStatus(**payload)
+    result = NetworkStatus(**payload)
+    # The daemon re-probed connectivity as part of connecting, so this is the
+    # freshest answer there is — and the stale one would show the user as still
+    # offline for the next few seconds.
+    _status_cache = (time.monotonic(), result)
+    return result

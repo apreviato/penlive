@@ -206,21 +206,52 @@ the browser never sees:
 | Ctrl+Alt+F2 (virtual terminal) | `getty@ttyN` masked + `NAutoVTs=0` in logind |
 | Ctrl+Alt+Del | `ctrl-alt-del.target` masked |
 | Ctrl+Alt+Backspace | `DontZap` in Xorg |
-| Alt+F4, Alt+Tab, right-click menu | `openbox-rc.xml` with empty `<keyboard>` and `<mouse>` |
-| Ctrl+R, F12, Ctrl+O, dropping a file | `src/kiosk.js` inside the app |
+| Alt+F4, Alt+Tab, right-click menu | `openbox-rc.xml`: empty `<mouse>`, and a no-op binding per escape key |
+| Ctrl+J, Ctrl+H, F12, view-source | managed Chromium policy: `chrome://*`, `devtools://*` and `file://*` are blocked, leaving those keys nowhere to navigate |
+| Ctrl+R, Ctrl+O, dropping a file | `src/kiosk.js` inside the app |
 | Closing Chromium somehow | a `while true` loop in `xsession.sh` reopens it |
-| Password-save/autofill prompts | managed Chromium policy + incognito profile |
+| Something ending up in front of the app | `keep_kiosk_in_front` in `xsession.sh` re-raises and re-focuses the kiosk window |
+| Password-save/autofill prompts | managed Chromium policy |
 
 The browser layer is the last one, not the only one: Chromium never receives
 Alt+F4, because the window manager consumes it first. And `kiosk.js` disables
 itself on the dev server — locking out reload and devtools would make the UI
 impossible to work on.
 
+The three keyboard layers have to be read together. Openbox grabs keys
+*globally*, so anything it takes never reaches the page at all — which is why
+Ctrl+C, Ctrl+D and Ctrl+L are deliberately left to the browser: the Terminal
+tab binds them to interrupt, EOF and clear, and none of them can leave the app
+(in kiosk mode Ctrl+L has no address bar to focus). Everything else that opens
+a browser surface, navigates away, or exits fullscreen is grabbed.
+
 Chromium runs with sign-in, sync, password storage, address/card autofill,
 translation prompts and the default-browser prompts disabled by managed
 policy. Wi-Fi credentials belong to NetworkManager, not to the browser
-profile; this also prevents the kiosk from leaving secrets in Chromium's
-persistent state.
+profile; the runtime profile also lives in `/run`, so nothing survives a
+reboot. Incognito is disabled by policy rather than by `--incognito`: a second
+window type in a kiosk with no way to switch windows is how the manager ends up
+behind something.
+
+## Kiosk: getting to the first frame
+
+X starts before the API is listening, so the browser opens
+`opt/penlive/loading.html` — a local splash that polls `/api/health` and
+forwards to the manager. Three things about that handoff are load-bearing:
+
+- **It waits for a manager it can actually show.** `/api/health` reports
+  `frontend`, whether the built `dist/` is mounted. The splash gets exactly one
+  navigation and nothing brings the kiosk back, so answering the port is not
+  enough. Reading that body cross-origin is why the API allows the `null`
+  origin a `file://` page sends.
+- **`index.html` repeats the same splash inline.** The live system reads a
+  440 kB bundle off a compressed squashfs on a USB stick; anything that waits
+  for the script leaves that gap black, which reads as a crash. `App` removes it
+  in a mount effect, once there is something to replace it with.
+- **Nothing on the first-paint path may block.** Network status goes through the
+  daemon, which handles one request at a time and shells out to `nmcli`. It is
+  fetched without being awaited, cached for a few seconds so the status bar and
+  `/api/setup/state` share one round trip, and every API call has a timeout.
 
 ## First run
 

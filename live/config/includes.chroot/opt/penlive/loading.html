@@ -27,6 +27,7 @@
       }
       h1 { margin: 18px 0 7px; font-size: 24px; letter-spacing: -.3px; }
       p { display: flex; align-items: center; gap: 9px; margin: 0; color: #a7b3c7; font-size: 13px; }
+      .slow { margin-top: 10px; max-width: 380px; text-align: center; color: #71819b; font-size: 12px; }
       .spinner {
         width: 14px;
         height: 14px;
@@ -48,18 +49,66 @@
       </div>
       <h1>PenLive</h1>
       <p><span class="spinner"></span> Starting the manager…</p>
+      <p class="slow" id="slow" hidden>
+        This is taking longer than usual. Storage is still being prepared, or the
+        manager is still starting; this screen moves on by itself as soon as it
+        does.
+      </p>
     </main>
     <script>
       const managerUrl = 'http://127.0.0.1:7777/';
+      const healthUrl = `${managerUrl}api/health`;
+      // The port answering is not the same as the app being servable, and this
+      // page gets exactly one navigation: once it leaves, nothing brings the
+      // kiosk back if the manager turns out not to be there. So it waits for
+      // health to say the built frontend is actually mounted.
+      let attempts = 0;
+
+      async function ready() {
+        // A cross-origin read, allowed for the file:// "null" origin by the
+        // API's CORS config, so the body can actually be inspected.
+        const res = await fetch(healthUrl, { cache: 'no-store' });
+        if (!res.ok) return false;
+        const body = await res.json();
+        return body.status === 'ok' && body.frontend !== false;
+      }
+
+      async function reachable() {
+        // Fallback for a browser that will not hand us the CORS body: an
+        // opaque response still proves the API is listening, and being stuck
+        // on this splash forever is worse than navigating a moment early.
+        await fetch(healthUrl, { mode: 'no-cors', cache: 'no-store' });
+        return true;
+      }
+
       async function openWhenReady() {
+        attempts += 1;
+        if (attempts > 20) document.getElementById('slow').hidden = false;
+
+        let go = false;
         try {
-          await fetch(`${managerUrl}api/health`, { mode: 'no-cors', cache: 'no-store' });
+          go = await ready();
+        } catch (_) {
+          // Two very different failures land here: the API is not listening
+          // yet, or it is listening but the browser will not let this page read
+          // the body. Only the second one should ever move on, and an opaque
+          // request is what tells them apart.
+          if (attempts > 12) {
+            try {
+              go = await reachable();
+            } catch (_) {
+              go = false;
+            }
+          }
+        }
+
+        if (go) {
           window.location.replace(managerUrl);
           return;
-        } catch (_) {
-          window.setTimeout(openWhenReady, 500);
         }
+        window.setTimeout(openWhenReady, 500);
       }
+
       openWhenReady();
     </script>
   </body>

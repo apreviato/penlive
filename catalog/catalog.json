@@ -779,31 +779,6 @@
       }
     },
     {
-      "id": "windows-11-enterprise-eval-ptbr",
-      "name": "Windows 11 Enterprise 25H2 Evaluation (pt-BR)",
-      "family": "windows",
-      "version": "25H2 (26200.6584)",
-      "architecture": "x64",
-      "adapter": "windows",
-      "_comment": "Booted through wimboot rather than a kernel and initrd: WindowsAdapter hands WinPE the four files it needs, and services/winmedia.py unpacks the ISO onto PENDATA so Setup can find its install.wim. Needs a stick built with --wimboot; without it the image is still downloadable, mountable and runnable in the VM.",
-      "sources": [
-        {
-          "url": "https://software-static.download.prss.microsoft.com/dbazure/888969d5-f34g-4e03-ac9d-1f9786c66749/26200.6584.250915-1905.25h2_ge_release_svc_refresh_CLIENTENTERPRISEEVAL_OEMRET_x64FRE_pt-br.iso"
-        }
-      ],
-      "sha256": "a5d6a86a9553bb730d1b723233108e90c1b9499f7284137218865919d4189ddd",
-      "size": 7033266176,
-      "checksum_source": "https://cdn-dynmedia-1.microsoft.com/is/content/microsoftcorp/microsoft/bade/documents/products-and-services/en-us/owned-and-operated/Verify-Download-Win11-Enterprise.pdf",
-      "checksum_manual": true,
-      "_warning": "Microsoft publishes this hash only in a PDF, so tools/update_catalog.py cannot re-derive it \u2014 hence checksum_manual. When Microsoft refreshes the evaluation build the URL, size and hash all change together: re-read the PDF and update all three by hand.",
-      "capabilities": {
-        "nativeBoot": true,
-        "kexec": false,
-        "vm": true,
-        "mount": true
-      }
-    },
-    {
       "id": "kali-2026-2-live",
       "name": "Kali Linux 2026.2 Live",
       "family": "kali",

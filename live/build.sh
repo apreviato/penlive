@@ -25,6 +25,29 @@ if ! command -v lb >/dev/null 2>&1; then
     exit 1
 fi
 
+# A single CR in the wrong file costs a 30-minute build. apt reads the package
+# lists literally, so a trailing CR turns every line into "E: Unable to locate
+# package systemd" at once, and a CR after a shebang becomes "bad interpreter:
+# /bin/sh^M" on the booted stick. .gitattributes forces LF, but the WSL route
+# (scripts/make-usb.ps1) rsyncs the working tree straight into the distro, so it
+# never passes through git's normalisation -- an editor that rewrote a file with
+# CRLF reaches live-build unchanged. Fail here, in a second, instead.
+echo "==> checking line endings"
+crlf_files=$(
+    find "${LIVE_DIR}" "${REPO_ROOT}/systemd" "${REPO_ROOT}/grub" \
+        -path "${BUILD_DIR}" -prune -o \
+        -type f \( -name '*.sh' -o -name '*.chroot' -o -name '*.binary' \
+                    -o -name '*.service' -o -name '*.cfg' -o -name 'config' \) \
+        -print0 2>/dev/null \
+        | xargs -0 -r grep -lI $'\r' 2>/dev/null || true
+)
+if [[ -n "${crlf_files}" ]]; then
+    echo "error: CRLF line endings in files the live system executes:" >&2
+    echo "${crlf_files}" | sed 's/^/    /' >&2
+    echo "fix with:  git add --renormalize . && git checkout -- ." >&2
+    exit 1
+fi
+
 echo "==> preparing build tree"
 mkdir -p "${BUILD_DIR}"
 cp -r "${LIVE_DIR}/auto" "${BUILD_DIR}/"

@@ -40,6 +40,13 @@ xserver-xorg-video-all
 xinit
 openbox
 chromium
+# xset/xsetroot (blanking, root colour), setxkbmap (drops the X zap binding),
+# xprop (waits for Openbox to own the screen) and xdotool (puts the kiosk window
+# back in front) are all called by opt/penlive/xsession.sh
+x11-xserver-utils
+x11-xkb-utils
+x11-utils
+xdotool
 fonts-dejavu-core
 # hides the mouse pointer when idle in the kiosk
 unclutter

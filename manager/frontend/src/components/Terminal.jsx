@@ -1,6 +1,12 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
-const ANSI = /\x1B(?:[@-_][0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\))/g;
+// Strips ANSI escapes from the shell's output. The second alternative is
+// OSC (ESC ]), which ends at either BEL or the String Terminator, ESC followed
+// by a backslash. That escaped backslash is load-bearing: this is a
+// module-scope regex literal, so a malformed one throws while the bundle is
+// being evaluated, React never mounts, and the whole kiosk is a black page
+// with a working cursor.
+const ANSI = /\x1B(?:[@-_][0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\))/g;
 
 export default function Terminal() {
   const [output, setOutput] = useState('');

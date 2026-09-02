@@ -68,14 +68,28 @@ export default function App() {
     return net;
   }, []);
 
+  // index.html paints a splash before this bundle has even been parsed -- on
+  // the live system it is read off a compressed squashfs on a USB stick, which
+  // takes real seconds. Clearing it here rather than in main.jsx means it
+  // survives until React has actually committed something to replace it with.
+  useEffect(() => {
+    document.getElementById('boot-splash')?.remove();
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
+    // Deliberately not awaited: the status bar's contents must not decide when
+    // the manager appears. Both of these end up at NetworkManager through a
+    // daemon that answers one request at a time, and on a machine that is still
+    // associating its Wi-Fi they are the slowest thing in the boot.
+    refreshStatus();
     (async () => {
-      await refreshStatus();
       let state = null;
       try {
         state = await api.setupState();
       } catch {
+        // The first-run wizard is a convenience, not a gate, and it stays
+        // reachable from Settings. Showing the manager beats showing nothing.
         state = { needs_setup: false };
       }
       if (cancelled) return;

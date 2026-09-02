@@ -51,7 +51,7 @@ async def test_network_scan_is_a_fixed_structured_daemon_operation(monkeypatch):
 
     calls = []
 
-    def fake_nmcli(args, *, check=True):
+    def fake_nmcli(args, *, check=True, timeout=35):
         calls.append((args, check))
         output = "Home\\:5G:91:WPA2:*\n" if "--fields" in args else ""
         return subprocess.CompletedProcess(["nmcli", *args], 0, stdout=output, stderr="")
@@ -76,7 +76,7 @@ async def test_network_connect_repairs_a_stale_security_profile(monkeypatch):
     calls = []
     connect_attempts = 0
 
-    def fake_nmcli(args, *, check=True):
+    def fake_nmcli(args, *, check=True, timeout=35):
         nonlocal connect_attempts
         calls.append((args, check))
         if args[:5] == ["--wait", "30", "device", "wifi", "connect"]:
@@ -100,6 +100,10 @@ async def test_network_connect_repairs_a_stale_security_profile(monkeypatch):
     assert (["connection", "delete", "id", "Home"], False) in calls
     assert result["connected"] is True
     assert result["internet"] is True
+    # Routine status polls read NetworkManager's cached connectivity so they
+    # cannot block the kiosk's first paint; a just-finished connect is the one
+    # caller that asks for a live probe instead.
+    assert (["networking", "connectivity", "check"], False) in calls
 
 
 @pytest.mark.asyncio

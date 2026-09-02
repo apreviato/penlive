@@ -29,6 +29,29 @@ def test_health(client):
     assert client.get("/api/health").json()["status"] == "ok"
 
 
+def test_health_reports_whether_the_frontend_can_be_served(client):
+    """The kiosk's boot splash navigates exactly once and cannot come back.
+
+    A listening port is not the same as a servable app, so health has to say
+    which it is; otherwise a stick built without `npm run build` boots to a
+    black page with no way out of it.
+    """
+    from app import main
+
+    body = client.get("/api/health").json()
+    assert body["frontend"] is main.FRONTEND_DIST.is_dir()
+
+
+def test_the_file_origin_splash_can_read_health(client):
+    """live/.../loading.html is a file:// page, so it sends Origin: null.
+
+    It exists before this server does and cannot be served from here, so
+    without this it can never read the body it is waiting on.
+    """
+    res = client.get("/api/health", headers={"Origin": "null"})
+    assert res.headers["access-control-allow-origin"] == "null"
+
+
 def test_list_images_reflects_db(client):
     repo.upsert_image_from_catalog(CATALOG_ENTRY)
     body = client.get("/api/images").json()

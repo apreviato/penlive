@@ -331,3 +331,36 @@ def test_unwritable_boot_partition_does_not_condemn_the_image(tmp_path, monkeypa
     assert "could not extract boot files" in image["inspection_error"]
     # nativeBoot must survive, or Boot (and its remount retry) becomes unreachable.
     assert image["capabilities"]["nativeBoot"] is True
+
+
+@pytest.mark.asyncio
+async def test_network_status_collapses_duplicate_lookups(monkeypatch):
+    """The first screen the kiosk paints asks for network status twice at once.
+
+    Once for the status bar, once through /api/setup/state. Both land on a
+    daemon that answers one request at a time and shells out to nmcli, so
+    without this they queue -- and the manager stays on its loading screen for
+    however long NetworkManager takes to answer both.
+    """
+    import asyncio
+
+    from app.services import network
+
+    calls = 0
+
+    async def fake_daemon_call(command, **args):
+        nonlocal calls
+        calls += 1
+        await asyncio.sleep(0)
+        return {"connected": True, "ssid": "Home", "ip_address": "192.0.2.10"}
+
+    monkeypatch.setattr(network, "_daemon_call", fake_daemon_call)
+    monkeypatch.setattr(network, "_status_cache", None, raising=False)
+
+    first, second = await asyncio.gather(network.status(), network.status())
+
+    assert calls == 1
+    assert first.ssid == second.ssid == "Home"
+
+    # ...and the cache is short enough that the status bar still tracks reality.
+    assert network._STATUS_TTL_SECONDS <= 5

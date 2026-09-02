@@ -401,20 +401,25 @@ async def handle_set_keyboard(args: dict) -> dict:
     return {"persisted": True, "applied_to_session": applied_now}
 
 
-def _run_nmcli(args: list[str], *, check: bool = True) -> subprocess.CompletedProcess:
-    """Run one fixed NetworkManager operation with stable, non-localised output."""
+def _run_nmcli(args: list[str], *, check: bool = True, timeout: int = 35) -> subprocess.CompletedProcess:
+    """Run one fixed NetworkManager operation with stable, non-localised output.
+
+    The timeout is a parameter because the daemon handles one request at a time:
+    a query the UI blocks its first paint on must not be allowed to sit for as
+    long as a connect attempt legitimately can.
+    """
     try:
         proc = subprocess.run(
             ["nmcli", *args],
             capture_output=True,
             text=True,
-            timeout=35,
+            timeout=timeout,
             env={**os.environ, "LC_ALL": "C", "LANG": "C"},
         )
     except FileNotFoundError as exc:
         raise RuntimeError("NetworkManager command-line tools are not installed") from exc
     except subprocess.TimeoutExpired as exc:
-        raise RuntimeError("NetworkManager did not respond within 35 seconds") from exc
+        raise RuntimeError(f"NetworkManager did not respond within {timeout} seconds") from exc
     if check and proc.returncode != 0:
         message = proc.stderr.strip() or proc.stdout.strip() or "NetworkManager operation failed"
         raise RuntimeError(message)
@@ -479,22 +484,41 @@ async def handle_network_scan(args: dict) -> dict:
     return {"networks": networks}
 
 
+# The status query is on the path the UI waits for before its first paint, and
+# the daemon answers one request at a time, so three nmcli calls at the default
+# 35s ceiling could hold a booting kiosk on a blank screen for over a minute.
+# NetworkManager answers all three of these in milliseconds when it is healthy.
+STATUS_TIMEOUT_SECONDS = 8
+
+
 async def handle_network_status(args: dict) -> dict:
-    connectivity_proc = _run_nmcli(["networking", "connectivity", "check"], check=False)
+    # `connectivity check` forces a live probe of NetworkManager's connectivity
+    # URL, which blocks for seconds on a machine that is still associating --
+    # exactly when the kiosk is trying to come up. The plain form reports the
+    # state NetworkManager already maintains on its own schedule, and callers
+    # that genuinely need a fresh answer (a just-completed Wi-Fi connect) ask
+    # for one with refresh=True.
+    connectivity_args = ["networking", "connectivity"]
+    if args.get("refresh"):
+        connectivity_args.append("check")
+    connectivity_proc = _run_nmcli(connectivity_args, check=False, timeout=STATUS_TIMEOUT_SECONDS)
     connectivity = connectivity_proc.stdout.strip().lower() or "unknown"
     if connectivity not in {"full", "limited", "portal", "none", "unknown"}:
         connectivity = "unknown"
     proc = _run_nmcli([
         "--terse", "--escape", "yes",
         "--fields", "DEVICE,TYPE,STATE,CONNECTION", "device", "status",
-    ])
+    ], timeout=STATUS_TIMEOUT_SECONDS)
     for line in proc.stdout.splitlines():
         fields = _split_nmcli(line)
         if len(fields) < 4:
             continue
         device, dtype, state, connection = fields[:4]
         if dtype in {"wifi", "ethernet"} and state == "connected":
-            ip_proc = _run_nmcli(["--get-values", "IP4.ADDRESS", "device", "show", device])
+            ip_proc = _run_nmcli(
+                ["--get-values", "IP4.ADDRESS", "device", "show", device],
+                timeout=STATUS_TIMEOUT_SECONDS,
+            )
             address = next((value for value in ip_proc.stdout.splitlines() if value), "")
             return {
                 "connected": True,
@@ -537,7 +561,7 @@ async def handle_network_connect(args: dict) -> dict:
             except RuntimeError as retry_exc:
                 message = str(retry_exc)
             else:
-                return await handle_network_status({})
+                return await handle_network_status({"refresh": True})
 
         lower = message.lower()
         if any(fragment in lower for fragment in (
@@ -545,7 +569,7 @@ async def handle_network_connect(args: dict) -> dict:
         )):
             raise RuntimeError("The Wi-Fi password was rejected. Check it and try again.") from exc
         raise RuntimeError(f"Could not connect to {ssid}: {message}") from exc
-    return await handle_network_status({})
+    return await handle_network_status({"refresh": True})
 
 
 
