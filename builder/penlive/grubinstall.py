@@ -1,9 +1,23 @@
-"""Builds the standalone EFI GRUB binary and installs boot configs onto PENSYS.
+"""Installs the EFI boot chain onto the ESP, and the boot configs onto PENSYS.
 
-The embedded config baked into BOOTX64.EFI is intentionally tiny: its only
-job is to find the PENSYS partition by label and hand off to the real
-grub.cfg living there. That way updating GRUB's menu logic later is just
-overwriting a file on an ext4 partition, not re-running grub-mkstandalone.
+Two chains are supported, and the build picks whichever the host can produce:
+
+  Signed (preferred, and what makes Secure Boot work)
+      firmware -> shimx64.efi        signed by Microsoft
+               -> grubx64.efi        signed by Debian, verified by shim
+               -> vmlinuz            signed by Debian, verified through shim
+    Debian's signed GRUB has /EFI/debian baked in as its prefix, so the stub
+    config goes there and hands off to the real menu on PENSYS. This chain
+    also works with Secure Boot switched off, so there is no reason to build
+    the other one when the signed pieces are available.
+
+  Standalone (fallback when shim-signed / grub-efi-amd64-signed are absent)
+      firmware -> BOOTX64.EFI        built here by grub-mkstandalone, unsigned
+    Refused outright by firmware with Secure Boot enabled.
+
+Either way the config embedded on the ESP is tiny: find PENSYS by label and
+hand off to the real grub.cfg there, so updating the menu is overwriting a
+file rather than rebuilding an EFI binary.
 """
 from __future__ import annotations
 
@@ -16,6 +30,36 @@ search --no-floppy --set=root --label PENSYS
 set prefix=($root)/boot/grub
 configfile ($root)/boot/grub/grub.cfg
 """
+
+# Debian's signed GRUB is built with this prefix and will look for its config
+# at <ESP>/EFI/debian/grub.cfg. It is not configurable without resigning, so
+# the stub goes where it expects.
+SIGNED_GRUB_PREFIX = "EFI/debian"
+
+SHIM_SIGNED = Path("/usr/lib/shim/shimx64.efi.signed")
+MOKMANAGER_SIGNED = Path("/usr/lib/shim/mmx64.efi.signed")
+GRUB_SIGNED = Path("/usr/lib/grub/x86_64-efi-signed/grubx64.efi.signed")
+
+
+def secure_boot_chain_available() -> bool:
+    """True when the host can supply a Microsoft-signed shim and a signed GRUB."""
+    return SHIM_SIGNED.is_file() and GRUB_SIGNED.is_file()
+
+
+def install_signed_chain(runner: CommandRunner, efi_mount: Path) -> None:
+    """Lay down shim + signed GRUB so the stick boots with Secure Boot enabled.
+
+    shim looks for grubx64.efi in the directory it was itself loaded from, so
+    both live in /EFI/BOOT alongside the firmware's fallback name. MokManager
+    is included so a user can enrol their own key later without rebuilding.
+    """
+    boot_dir = efi_mount / "EFI" / "BOOT"
+    runner.run(["install", "-D", str(SHIM_SIGNED), str(boot_dir / "BOOTX64.EFI")])
+    runner.run(["install", "-D", str(GRUB_SIGNED), str(boot_dir / "grubx64.efi")])
+    if MOKMANAGER_SIGNED.is_file():
+        runner.run(["install", "-D", str(MOKMANAGER_SIGNED), str(boot_dir / "mmx64.efi")])
+
+    runner.write_file(efi_mount / SIGNED_GRUB_PREFIX / "grub.cfg", EMBEDDED_CFG)
 
 GRUB_EFI_MODULE_DIR = Path("/usr/lib/grub/x86_64-efi")
 

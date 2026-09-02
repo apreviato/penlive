@@ -231,15 +231,62 @@ A good candidate for a weekly CI job.
 python tools/update_catalog.py --write
 ```
 
+## Secure Boot
+
+PenLive boots with Secure Boot **enabled**. The stick ships the standard Debian
+chain, so no key enrolment and no firmware changes are needed:
+
+```
+firmware  ->  shimx64.efi   signed by Microsoft
+          ->  grubx64.efi   signed by Debian, verified by shim
+          ->  vmlinuz       signed by Debian, verified through shim
+```
+
+`live/build.sh` uses Debian's stock kernel, which is already signed, so all
+three links are covered. Verified under OVMF with Microsoft's keys enrolled -
+the same firmware that rejects an unsigned build reaches the kiosk.
+
+The builder picks this chain automatically whenever `shim-signed` and
+`grub-efi-amd64-signed` are installed on the build host, and falls back to an
+unsigned `grub-mkstandalone` binary when they are not. The guided scripts list
+both as dependencies, so a normal build gets the signed chain.
+
+### What still needs Secure Boot off
+
+Booting a *downloaded* system is a different matter, because shim only trusts
+Debian's and Microsoft's keys:
+
+| Action | Secure Boot on |
+|---|---|
+| Booting PenLive itself | works |
+| Running an ISO in a VM (Run VM) | works - QEMU does not involve firmware |
+| Mount, backup, repair, provisioning tools | work |
+| Booting a Debian or Ubuntu ISO by chainloading it | usually works: their own bootloader is signed too |
+| Booting an ISO via the extracted kernel (`linux` method) | fails unless that kernel is Debian-signed |
+
+The `linux` method hands GRUB a kernel taken out of the ISO. Ubuntu's kernels
+are signed by Canonical and Fedora's by Red Hat, and shim trusts neither, so
+GRUB refuses to start them. There is no way around that short of enrolling
+those vendors' keys yourself with MokManager (`mmx64.efi`, shipped on the ESP
+for exactly this).
+
+One more limitation: Debian's signed GRUB has no `exfat` module, so
+chainloading an ISO stored on the exFAT `PENDATA` partition fails under Secure
+Boot. Build with `--data-fs ext4` if you need that combination and can give up
+reading the stick on Windows.
+
+So: install systems with Secure Boot off, then leave it on for everyday use.
+
 ## Common problems
 
-**GRUB does not appear / the machine ignores the stick** — almost always Secure
-Boot. This is the single most common failure, and it looks like the firmware is
-simply skipping the stick: you select it in the boot menu and the machine
-carries on to the next device without a word.
+**GRUB does not appear / the machine ignores the stick** — with a current
+build this should not happen, because the stick ships a signed boot chain (see
+"Secure Boot" above). It looks like the firmware simply skips the stick: you
+select it in the boot menu and the machine carries on without a word.
 
-Reproduced under OVMF with Microsoft's keys enrolled, which is how a machine
-ships from the factory:
+If it does happen, the build fell back to the unsigned bootloader because
+`shim-signed` and `grub-efi-amd64-signed` were missing on the build host.
+Under OVMF with Microsoft's keys enrolled that produces:
 
 ```
 BdsDxe: loading Boot0001 "UEFI Misc Device" from PciRoot(0x0)/Pci(0x3,0x0)
@@ -247,12 +294,21 @@ BdsDxe: failed to load Boot0001 "UEFI Misc Device" ... : Access Denied
 BdsDxe: No bootable option or device was found.
 ```
 
-PenLive builds its own GRUB with `grub-mkstandalone`, so `BOOTX64.EFI` carries
-no signature Secure Boot will accept, and the firmware refuses to execute it.
-Nothing about the stick is wrong — the same image boots all the way to the
-kiosk once Secure Boot is off.
+Install the two packages and rebuild:
 
-To fix it, in the firmware setup (usually F2, Del or F10 at power-on):
+```bash
+sudo apt install shim-signed grub-efi-amd64-signed
+```
+
+Check what a stick actually carries — a signed one has `grubx64.efi` beside
+`BOOTX64.EFI`:
+
+```bash
+sudo mount /dev/sdb1 /mnt && ls -R /mnt/EFI && sudo umount /mnt
+```
+
+Otherwise, to turn Secure Boot off, in firmware setup (usually F2, Del or F10
+at power-on):
 
 1. Find **Secure Boot** — often under Security, Boot, or Authentication.
 2. Set it to **Disabled**. Some firmware requires setting an administrator
@@ -261,10 +317,6 @@ To fix it, in the firmware setup (usually F2, Del or F10 at power-on):
    GPT/ESP stick is invisible to a machine booting in legacy mode.
 4. Save and exit, then pick the USB device from the boot menu (F12, F10, Esc
    or F9 depending on vendor).
-
-Signing the bootloader so Secure Boot accepts it needs a Microsoft-signed shim
-and a signing chain in the builder; it is deliberately out of scope for now
-(see ARCHITECTURE.md, "What was not done, and why").
 
 **The stick boots in QEMU but not on hardware** — the image is fine; the
 difference is firmware policy. Check Secure Boot and CSM as above. To confirm

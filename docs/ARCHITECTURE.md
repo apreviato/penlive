@@ -7,8 +7,10 @@ does; here is the reasoning that does not survive in comments.
 
 ```
 UEFI
- └─ EFI/BOOT/BOOTX64.EFI          (standalone GRUB, on the PENEFI partition)
-     └─ configfile → PENSYS/boot/grub/grub.cfg
+ └─ EFI/BOOT/BOOTX64.EFI          (shim, Microsoft-signed, on PENEFI)
+     └─ EFI/BOOT/grubx64.efi      (GRUB, Debian-signed, verified by shim)
+         └─ EFI/debian/grub.cfg   (stub: find PENSYS, hand off)
+             └─ configfile → PENSYS/boot/grub/grub.cfg
          ├─ menuentry "PenLive Manager"          (default)
          ├─ source boot/state/nextboot.cfg       (if present and attempts < 3)
          └─ source boot/grub/recovery.cfg        (always)
@@ -23,13 +25,12 @@ UEFI
                          └─ penlive-kiosk    (X + fullscreen Chromium)
 ```
 
-### Why the embedded GRUB is minimal
+### Why the config on the ESP is minimal
 
-`grub-mkstandalone` produces a self-contained `BOOTX64.EFI`, but rewriting it is
-awkward. So the embedded config does only two things: find the partition by its
-`PENSYS` label and `configfile` into the real `grub.cfg`. All the menu logic
-lives in an ordinary file on an ext4 partition — updating the menu is
-overwriting a file, not rebuilding the EFI binary.
+Whichever chain is used, the config on the ESP does only two things: find the
+partition by its `PENSYS` label and `configfile` into the real `grub.cfg`. All
+the menu logic lives in an ordinary file on an ext4 partition — updating the
+menu is overwriting a file, not rebuilding or resigning an EFI binary.
 
 ### The boot watchdog (what stops the stick bricking itself)
 
@@ -77,6 +78,32 @@ resetting the system would cost tens of GB of re-downloading.
 partition labelled exactly `persistence` containing `persistence.conf`. That
 name is live-boot's contract; renaming it silently breaks the overlay, which is
 why it kept its name when everything else was renamed to PenLive.
+
+### Secure Boot
+
+The ESP carries Debian's signed chain rather than a bootloader built here:
+Microsoft-signed `shimx64.efi` as `BOOTX64.EFI`, Debian-signed `grubx64.efi`
+beside it, and Debian's already-signed kernel. That is the only combination a
+factory-configured machine will execute, and it works just as well with Secure
+Boot off, so there is no reason to build the unsigned one when the pieces are
+present. `grub-mkstandalone` remains the fallback for hosts without
+`shim-signed` / `grub-efi-amd64-signed`.
+
+Debian's signed GRUB has `/EFI/debian` baked in as its prefix and cannot be
+told to look elsewhere without resigning it, so the stub config goes there and
+hands off to the real menu on PENSYS - the same indirection the standalone
+build uses, just at a fixed path.
+
+Verifying the layout treats a *partial* chain as an error: a shim that cannot
+find `grubx64.efi` is worse than no shim, because the firmware launches it and
+then stops at a message the user cannot act on.
+
+This does not extend to booting downloaded systems. shim trusts Debian's and
+Microsoft's keys, so a kernel extracted from an Ubuntu or Fedora ISO is
+refused; chainloading those ISOs works, because their own bootloaders are
+signed. Debian's signed GRUB also has no `exfat` module, so chainloading from
+the exFAT PENDATA partition needs `--data-fs ext4`. MokManager ships on the
+ESP for anyone who wants to enrol other vendors' keys.
 
 ### Filling the stick
 
@@ -287,7 +314,5 @@ In the order it makes sense to tackle:
    has been validated on hardware with the Linux distributions.
 2. **A/B updates of the manager** — `system-a.squashfs` / `system-b.squashfs`
    with GRUB rollback. The partition layout already reserves room for it.
-3. **Secure Boot** — needs a Microsoft-signed shim and a signing chain in the
-   builder; it multiplies build and update complexity.
-4. **Legacy BIOS** — only if a real need appears. Supporting UEFI x86-64 alone
+3. **Legacy BIOS** — only if a real need appears. Supporting UEFI x86-64 alone
    eliminates an enormous number of special cases.

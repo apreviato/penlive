@@ -54,6 +54,10 @@ p7zip-full
 squashfs-tools
 libarchive-tools
 grub-efi-amd64-bin
+# Secure Boot chain: Microsoft-signed shim plus Debian-signed GRUB, so the
+# stick boots on machines that ship with Secure Boot enabled.
+shim-signed
+grub-efi-amd64-signed
 grub-common
 kexec-tools
 

@@ -27,7 +27,8 @@ UEFI → GRUB → Debian Live (SquashFS + OverlayFS) → FastAPI + Chromium kios
 | First-run setup wizard (keyboard + network) | done |
 | Three-layer kiosk lockdown (VT, WM, browser) | done |
 | 8 tools: backup, restore, SMART, repair, recovery, provisioning | done |
-| Windows / wimboot, A/B updates, Secure Boot, legacy BIOS | **not implemented** — see [Scope](#scope-and-limits) |
+| Secure Boot (Microsoft-signed shim + Debian-signed GRUB) | done |
+| Windows / wimboot, A/B updates, legacy BIOS | **not implemented** — see [Scope](#scope-and-limits) |
 
 ## Quick start (development)
 
@@ -89,8 +90,9 @@ command line. See [docs/PLUGINS.md](docs/PLUGINS.md).
 make test
 ```
 
-182 tests: 28 in the builder (partitioning, safety guards, provisioning plans,
-the image path) and 154 in the backend (adapters against synthetic ISOs, GRUB
+193 tests: 39 in the builder (partitioning, safety guards, provisioning plans,
+the image path, GRUB module selection and the Secure Boot chain) and 154 in the
+backend (adapters against synthetic ISOs, GRUB
 menuentry generation, SHA-256 verification, the daemon protocol, adversarial
 validation of privileged arguments, the job runner, disk inventory, the HTTP
 API and the catalog schema).
@@ -137,6 +139,11 @@ flashing.
 > device path to confirm — not even `--yes` skips that — and refuses to write
 > to the disk the running system booted from.
 
+The stick boots with **Secure Boot enabled**: it ships Debian's
+Microsoft-signed shim and Debian-signed GRUB, so no key enrolment or firmware
+change is needed. Booting a *downloaded* system is a separate question —
+see [Secure Boot](docs/BUILD.md#secure-boot) for what still needs it off.
+
 The manual steps, and how to test in QEMU before touching real hardware, are in
 [docs/BUILD.md](docs/BUILD.md).
 
@@ -144,7 +151,7 @@ The manual steps, and how to test in QEMU before touching real hardware, are in
 
 ```
 GPT
-├── p1  PENEFI       FAT32   512M   EFI/BOOT/BOOTX64.EFI
+├── p1  PENEFI       FAT32   512M   EFI/BOOT/{BOOTX64.EFI,grubx64.efi,mmx64.efi} + EFI/debian/grub.cfg
 ├── p2  PENSYS       ext4    4G     live/ (kernel, initrd, squashfs) + boot/state + boot/extracted
 ├── p3  persistence  ext4    8G     OverlayFS (live-boot) — settings, Wi-Fi
 └── p4  PENDATA      exFAT   rest   images/ (ISOs), catalog/, logs/
@@ -172,11 +179,15 @@ catalog, tools, the backup form and a streaming job console), the builder's
 command plan under `--dry-run`, and the catalog checksums re-derived from each
 distribution's own published checksum file.
 
-**Not verified:** nothing has been tested on real hardware or UEFI. Native
-boot, OverlayFS persistence, the Chromium kiosk, the virtual-terminal lockdown
-and the adapter `cmdline` values all need validation in QEMU or on hardware
-before any serious use — start with [docs/BUILD.md](docs/BUILD.md), section
-"Testing in QEMU".
+**Verified in QEMU/OVMF:** the built image boots end to end — GRUB, kernel,
+initrd, live-boot, systemd, X, and the Chromium kiosk — both with Secure Boot
+off and, using the signed chain, with Secure Boot on and Microsoft's keys
+enrolled.
+
+**Not verified:** nothing has been tested on real hardware. OverlayFS
+persistence across reboots, the virtual-terminal lockdown, Wi-Fi against real
+adapters, and the adapter `cmdline` values still need validation — start with
+[docs/BUILD.md](docs/BUILD.md), section "Testing in QEMU".
 
 The privileged tools were exercised against a simulated daemon (argument
 validation and the job runner have their own tests), but none has run against
@@ -184,5 +195,4 @@ real disks. Before trusting Backup/Restore/Provisioning, try them on
 disposable disks inside a VM.
 
 **Out of scope for now** (a deliberate decision, in the suggested order):
-Windows via wimboot, A/B updates of the manager itself, Secure Boot, and
-legacy BIOS.
+Windows via wimboot, A/B updates of the manager itself, and legacy BIOS.

@@ -182,6 +182,11 @@ declare -A PACKAGE_FOR=(
     [mkfs.exfat]=exfatprogs
     [mkfs.ext4]=e2fsprogs
     [grub-mkstandalone]=grub-efi-amd64-bin
+    # The signed chain is what makes Secure Boot work. Without these the
+    # build still succeeds, but produces an unsigned bootloader the
+    # firmware refuses unless Secure Boot is turned off.
+    [/usr/lib/shim/shimx64.efi.signed]=shim-signed
+    [/usr/lib/grub/x86_64-efi-signed/grubx64.efi.signed]=grub-efi-amd64-signed
     [grub-editenv]=grub-common
     [wipefs]=util-linux
     [partprobe]=parted
@@ -194,9 +199,17 @@ declare -A PACKAGE_FOR=(
     [zstd]=zstd
 )
 
-# A command that resolves under /mnt/ is a Windows executable reached through
-# WSL interop, not something we can build with. Treat it as absent.
+# Entries are either a command name or an absolute path to a required file
+# (the signed .efi binaries are data, not executables, so `command -v` would
+# never find them).
+#
+# For commands: one resolving under /mnt/ is a Windows executable reached
+# through WSL interop, not something we can build with, so treat it as absent.
 have_linux_cmd() {
+    if [[ "$1" == /* ]]; then
+        [[ -e "$1" ]]
+        return
+    fi
     local resolved
     resolved="$(command -v "$1" 2>/dev/null)" || return 1
     [[ "${resolved}" != /mnt/* ]]

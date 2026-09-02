@@ -77,3 +77,76 @@ def test_embedded_config_targets_the_pensys_label():
     one the builder writes."""
     assert "--label PENSYS" in grubinstall.EMBEDDED_CFG
     assert "configfile" in grubinstall.EMBEDDED_CFG
+
+
+# --- Secure Boot chain -------------------------------------------------------
+
+def test_signed_chain_detection_requires_both_pieces(tmp_path, monkeypatch):
+    r"""shim alone is worse than neither: the firmware launches it, then stops
+    at 'Failed to open \EFI\BOOT\grubx64.efi'."""
+    shim = tmp_path / "shimx64.efi.signed"
+    grub = tmp_path / "grubx64.efi.signed"
+    monkeypatch.setattr(grubinstall, "SHIM_SIGNED", shim)
+    monkeypatch.setattr(grubinstall, "GRUB_SIGNED", grub)
+
+    assert grubinstall.secure_boot_chain_available() is False
+    shim.write_bytes(b"MZ")
+    assert grubinstall.secure_boot_chain_available() is False, "shim alone must not count"
+    grub.write_bytes(b"MZ")
+    assert grubinstall.secure_boot_chain_available() is True
+
+
+def test_signed_chain_lands_where_firmware_and_shim_look(tmp_path, monkeypatch):
+    from penlive.runner import CommandRunner
+
+    shim = tmp_path / "shimx64.efi.signed"; shim.write_bytes(b"MZ")
+    grub = tmp_path / "grubx64.efi.signed"; grub.write_bytes(b"MZ")
+    mm = tmp_path / "mmx64.efi.signed";     mm.write_bytes(b"MZ")
+    monkeypatch.setattr(grubinstall, "SHIM_SIGNED", shim)
+    monkeypatch.setattr(grubinstall, "GRUB_SIGNED", grub)
+    monkeypatch.setattr(grubinstall, "MOKMANAGER_SIGNED", mm)
+
+    esp = tmp_path / "esp"
+    runner = CommandRunner(dry_run=True)
+    grubinstall.install_signed_chain(runner, esp)
+
+    # CommandRunner shell-quotes its arguments, so match on the source/target
+    # pair per command rather than on one concatenated string.
+    installs = [h for h in runner.history if h.startswith("install ")]
+
+    def installed(source_name, *dest_parts):
+        want_dest = str(esp.joinpath(*dest_parts))
+        return any(source_name in h and want_dest in h for h in installs)
+
+    # The firmware's removable-media fallback path must be the shim itself.
+    assert installed(shim.name, "EFI", "BOOT", "BOOTX64.EFI")
+    # shim looks for grubx64.efi beside itself, not elsewhere on the ESP.
+    assert installed(grub.name, "EFI", "BOOT", "grubx64.efi")
+    # MokManager, so a user can enrol their own key without a rebuild.
+    assert installed(mm.name, "EFI", "BOOT", "mmx64.efi")
+
+
+def test_stub_config_goes_to_the_prefix_debian_grub_was_signed_with(tmp_path, monkeypatch):
+    """Debian's signed GRUB has /EFI/debian baked in and cannot be told to look
+    anywhere else without resigning it."""
+    from penlive.runner import CommandRunner
+
+    shim = tmp_path / "shim"; shim.write_bytes(b"MZ")
+    grub = tmp_path / "grub"; grub.write_bytes(b"MZ")
+    monkeypatch.setattr(grubinstall, "SHIM_SIGNED", shim)
+    monkeypatch.setattr(grubinstall, "GRUB_SIGNED", grub)
+    monkeypatch.setattr(grubinstall, "MOKMANAGER_SIGNED", tmp_path / "absent")
+
+    esp = tmp_path / "esp"
+    runner = CommandRunner(dry_run=False)
+    grubinstall.install_signed_chain(runner, esp)
+
+    stub = esp / "EFI" / "debian" / "grub.cfg"
+    assert stub.is_file()
+    text = stub.read_text(encoding="utf-8")
+    assert "--label PENSYS" in text
+    assert "configfile" in text
+
+
+def test_signed_prefix_matches_the_stub_location():
+    assert grubinstall.SIGNED_GRUB_PREFIX == "EFI/debian"

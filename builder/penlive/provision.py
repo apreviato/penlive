@@ -46,9 +46,15 @@ def provision(
          mounted(runner, persist_dev, persist_mount, fstype="ext4") as persist_mp, \
          mounted(runner, data_dev, data_mount, fstype=data_fstype) as data_mp:
 
-        standalone_efi = mount_root / "_work" / "BOOTX64.EFI"
-        grubinstall.build_standalone_efi(runner, standalone_efi, mount_root / "_work")
-        grubinstall.install_efi_partition(runner, efi_mp, standalone_efi)
+        # Prefer the signed chain: it is the only one Secure Boot will execute,
+        # and it works just as well with Secure Boot off, so there is no reason
+        # to build the unsigned one when the pieces are on the host.
+        if grubinstall.secure_boot_chain_available():
+            grubinstall.install_signed_chain(runner, efi_mp)
+        else:
+            standalone_efi = mount_root / "_work" / "BOOTX64.EFI"
+            grubinstall.build_standalone_efi(runner, standalone_efi, mount_root / "_work")
+            grubinstall.install_efi_partition(runner, efi_mp, standalone_efi)
         grubinstall.install_bootsys_files(
             runner, bootsys_mp, grub_cfg=inputs.grub_cfg, recovery_cfg=inputs.recovery_cfg
         )
