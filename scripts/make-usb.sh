@@ -303,13 +303,91 @@ elif [[ ${SKIP_BUILD} -eq 1 ]]; then
     die "--skip-build was given but there is no live system at ${LIVE_OUT}"
 fi
 
+# live-build runs for 20-40 minutes. Streaming its raw output would bury the
+# script's own messages, but staying silent is worse: squashfs compression in
+# particular emits nothing for several minutes, which is indistinguishable from
+# a hang. So the full output goes to the log and a summary is shown here.
+#
+# `read -t` is what makes the quiet stretches survivable: the heartbeat fires on
+# the timeout, so elapsed time keeps advancing even when the build says nothing.
+live_build_progress() {
+    local start=${SECONDS}
+    local stage="starting" shown_stage="" activity="preparing"
+    local fetched=0 last_tick=0 line rc now
+
+    _elapsed() { printf '%02d:%02d' $(( (SECONDS - start) / 60 )) $(( (SECONDS - start) % 60 )); }
+    _emit() { log "     $(_elapsed)  ${stage}$(printf '%*s' $(( 10 - ${#stage} )) '')  ${activity}"; }
+
+    while true; do
+        if IFS= read -r -t 5 line; then
+            printf '%s\n' "${line}" >> "${LOG_FILE}"
+
+            case "${line}" in
+                *"] lb "*)
+                    # live-build announces each phase as "[timestamp] lb <stage>"
+                    stage="${line##*] lb }"
+                    stage="${stage%% *}"
+                    stage="${stage%%_*}"
+                    # Reset to a per-stage default, or the line carries the
+                    # previous phase's activity and reads as nonsense - e.g.
+                    # "binary / configuring packages".
+                    case "${stage}" in
+                        bootstrap) activity="creating the base system" ;;
+                        chroot)    activity="installing packages" ;;
+                        installer) activity="preparing the installer" ;;
+                        binary)    activity="building kernel, initrd and squashfs" ;;
+                        source)    activity="collecting sources" ;;
+                        *)         activity="working" ;;
+                    esac
+                    ;;
+                "I: Retrieving"*|"I: Validating"*) activity="fetching base system" ;;
+                "I: Extracting"*)                  activity="extracting base system" ;;
+                "I: Configuring"*|"Setting up "*)  activity="configuring packages" ;;
+                "Unpacking "*)                     activity="unpacking packages" ;;
+                Get:*)
+                    fetched=$(( fetched + 1 ))
+                    activity="${fetched} packages downloaded"
+                    ;;
+                *mksquashfs*|*"Compressing"*|*".squashfs"*) activity="compressing filesystem (quiet for a while)" ;;
+                *"Begin unmounting"*)              activity="finishing up" ;;
+            esac
+        else
+            rc=$?
+            # read exits >128 on timeout and 1 at end of input; only the latter
+            # means the build is over.
+            (( rc > 128 )) || break
+        fi
+
+        now=${SECONDS}
+        if [[ "${stage}" != "${shown_stage}" ]]; then
+            shown_stage="${stage}"
+            last_tick=${now}
+            _emit
+        elif (( now - last_tick >= 15 )); then
+            last_tick=${now}
+            _emit
+        fi
+    done
+
+    activity="done"
+    _emit
+}
+
 if [[ ${live_ready} -eq 0 ]]; then
     warn "this downloads a full Debian system and takes 20-40 minutes"
     ask "Start the build?" || die "aborted"
-    info "running live/build.sh (output goes to ${LOG_FILE})"
-    "${REPO_ROOT}/live/build.sh" >>"${LOG_FILE}" 2>&1 \
-        || die "live build failed - see ${LOG_FILE}"
-    ok "built"
+    info "running live/build.sh - full output in ${LOG_FILE}"
+    note "progress below updates every 15s; long gaps during compression are normal"
+    log ""
+
+    set -o pipefail
+    "${REPO_ROOT}/live/build.sh" 2>&1 | live_build_progress
+    live_rc=${PIPESTATUS[0]}
+    set +o pipefail
+
+    log ""
+    (( live_rc == 0 )) || die "live build failed (exit ${live_rc}) - see ${LOG_FILE}"
+    ok "built in $(du -sh "${LIVE_OUT}" 2>/dev/null | cut -f1) of artifacts"
 fi
 
 for f in vmlinuz initrd.img filesystem.squashfs; do

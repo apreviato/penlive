@@ -71,9 +71,42 @@ lb build
 
 echo "==> collecting artifacts"
 mkdir -p "${OUT_DIR}"
+
+# live-build emits both an unversioned name and a versioned hardlink, e.g.
+# vmlinuz alongside vmlinuz-6.12.107+deb13-amd64. A `cp binary/live/vmlinuz* dest`
+# therefore passes cp two sources and one non-directory target, and the whole
+# 40-minute build fails at the very last step with "No such file or directory".
+collect_artifact() {
+    local base="$1" dest="$2"
+
+    if [[ -f "binary/live/${base}" ]]; then
+        cp "binary/live/${base}" "${dest}"
+        return
+    fi
+
+    # Older/newer layouts may only ship the versioned name. Accept it, but only
+    # when exactly one candidate exists - picking arbitrarily from several
+    # kernel flavours would produce a stick that boots the wrong one.
+    local matches=()
+    shopt -s nullglob
+    matches=(binary/live/"${base}"-*)
+    shopt -u nullglob
+
+    if [[ ${#matches[@]} -eq 1 ]]; then
+        cp "${matches[0]}" "${dest}"
+    elif [[ ${#matches[@]} -eq 0 ]]; then
+        echo "error: live-build produced no ${base} in binary/live/" >&2
+        exit 1
+    else
+        echo "error: several ${base} candidates in binary/live/: ${matches[*]}" >&2
+        echo "       cannot choose between kernel flavours automatically" >&2
+        exit 1
+    fi
+}
+
 cp binary/live/filesystem.squashfs "${OUT_DIR}/filesystem.squashfs"
-cp binary/live/vmlinuz*           "${OUT_DIR}/vmlinuz"
-cp binary/live/initrd.img*        "${OUT_DIR}/initrd.img"
+collect_artifact vmlinuz    "${OUT_DIR}/vmlinuz"
+collect_artifact initrd.img "${OUT_DIR}/initrd.img"
 
 echo
 echo "done. artifacts in ${OUT_DIR}:"
