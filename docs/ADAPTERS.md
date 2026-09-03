@@ -39,6 +39,7 @@ BootConfig(
     initrd="initrd",
     cmdline="boot=casper iso-scan/filename=/images/x.iso quiet ---",
     iso_rel_path="images/x.iso", # path relative to the root of PENDATA
+    initrd_files=None,            # optional files packed into a trailing newc archive
 )
 ```
 
@@ -63,7 +64,7 @@ adapter.
 
 **`wimboot`** — Windows only. GRUB loads the wimboot binary as if it were a
 kernel, and passes `bootmgfw.efi`, the BCD, `boot.sdi` and `boot.wim` in a
-single in-memory cpio archive using GRUB's `newc:<name>:<path>` syntax. See
+single in-memory cpio archive using GRUB's `newc:/<name>:<path>` syntax. See
 "Windows" below.
 
 ## Existing adapters
@@ -72,9 +73,10 @@ single in-memory cpio archive using GRUB's `newc:<name>:<path>` syntax. See
 |---|---|---|---|
 | `ubuntu` | `/casper/vmlinuz` | 95 | `boot=casper iso-scan/filename=` |
 | `debian` | `/live/vmlinuz` | 90 | `boot=live findiso=` |
-| `proxmox` | `/boot/linux26` | 90 | `ro ramdisk_size=... findiso=` |
+| `proxmox` | `/boot/linux26` | 90 | official graphical installer args; complete ISO supplied as `/proxmox.iso` in initramfs |
 | `fedora` | `/images/pxeboot/vmlinuz` | 85 | Live: `root=live:CDLABEL=... rd.live.image iso-scan/filename=`; installer: `inst.stage2=hd:LABEL=PENDATA:` |
 | `arch` | `/arch/boot/x86_64/vmlinuz-linux` | 85 | `img_dev=... img_loop=` |
+| `systemrescue` | `/sysresccd/boot/x86_64/vmlinuz` | 92 | `img_label=PENDATA img_loop=` |
 | `debian-installer` | `/install.amd/vmlinuz` | 80 | `iso-scan/filename=` |
 | `windows` | `/sources/boot.wim` | 90 | wimboot (see below) |
 | `generic` | `/EFI/BOOT/BOOTX64.EFI` | 10 | chainload |
@@ -90,14 +92,17 @@ their initrds expect different arguments. The adapter distinguishes them by
 `/LiveOS/squashfs.img`; Live media receives its ISO9660 volume label plus the
 ISO file path, while installer media keeps Anaconda's `inst.stage2` argument.
 
-SystemRescue and openSUSE match none of them and fall back to
-`GenericEfiAdapter`. Chainloading a loopback-mounted ISO is best-effort — the
-target's own bootloader still has to find its media — so those two are the
-first candidates if a new adapter is worth writing.
+SystemRescue has a dedicated adapter using its documented loopback contract.
+Generic EFI chainloading remains best-effort because the target's bootloader
+loses GRUB's loop device when the kernel starts. Catalog images such as Alpine
+and the rolling openSUSE installer are therefore marked VM/Mount-only until a
+release-specific native method can keep their installation media reachable;
+the UI must not offer a Boot button whose known result is a recovery prompt.
 
-> The Arch and Proxmox `cmdline` values vary between releases. Treat them as a
-> starting point: check `/loader/entries/*.conf` or `/boot/grub/grub.cfg` inside
-> the specific ISO before relying on them in production.
+> Arch's `cmdline` can vary between releases. Proxmox is different: its own
+> initramfs explicitly supports a complete `/proxmox.iso` for PXE-style boots,
+> so PenLive stages the verified ISO on PENSYS and has GRUB append it as a named
+> `newc` member. `findiso=` is deliberately not used because Proxmox ignores it.
 
 > **Check every layout the family ships.** FedoraAdapter looks for a kernel
 > under `/images/pxeboot` (netinst and DVD) *and* under `/isolinux` (what

@@ -196,6 +196,7 @@ def test_pending_boot_uses_grubs_one_shot_entry():
         < config.index("set prefix=($root)/grub")
         < config.index("insmod exfat")
     )
+    assert 'if [ "x$shim_lock" != "xy" ]' in config
 
 
 def test_grub_reads_the_same_paths_the_manager_writes():
@@ -267,6 +268,29 @@ def test_vm_direct_disk_mode_requires_explicit_destructive_confirmation():
     assert '"prepare_vm_disk"' in protocol
     assert '"release_vm_disk"' in protocol
     assert "\nacl\n" in packages
+
+
+def test_vm_tab_is_always_visible_and_empty_state_lists_saved_sessions():
+    app = (ROOT / "manager" / "frontend" / "src" / "App.jsx").read_text()
+    viewer = (ROOT / "manager" / "frontend" / "src" / "components" / "VmViewer.jsx").read_text()
+
+    assert "{ id: 'vm', label: 'VM' }" in app
+    assert "hasVmContent" not in app
+    assert "Saved sessions" in viewer
+    assert "<VmSessions" in viewer
+    assert "It remains saved after resuming" in viewer
+    assert "vm-saved-while-running" in viewer
+    assert "Resuming uses the session up" not in viewer
+
+
+def test_secure_boot_check_can_leave_loading_state_after_an_error():
+    panel = (
+        ROOT / "manager" / "frontend" / "src" / "components" / "SecureBootPanel.jsx"
+    ).read_text()
+
+    assert "setLoading(false)" in panel
+    assert "Check failed" in panel
+    assert ">Retry<" in panel
 
 
 def test_browser_policy_leaves_escape_shortcuts_nowhere_to_navigate():

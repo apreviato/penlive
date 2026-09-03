@@ -118,6 +118,16 @@ export default function FileManager({ onNotice, target }) {
     await load(path, source);
   });
 
+  const loadIso = (entry) => action(async () => {
+    const image = await api.importImage(entry.path);
+    onNotice({
+      kind: 'info',
+      title: 'ISO loaded',
+      message: `${image.name} is now available in Systems.`,
+    });
+    await load(path, source);
+  });
+
   return (
     <div className="content">
       {error && <div className="banner banner-error"><span>{error}</span><button className="btn btn-sm" onClick={() => setError(null)}>Dismiss</button></div>}
@@ -179,6 +189,14 @@ export default function FileManager({ onNotice, target }) {
             <span className="file-meta">{entry.kind === 'file' ? formatBytes(entry.size) : '—'}</span>
             <span className="file-meta">{formatDate(entry.modified)}</span>
             <span className="file-actions">
+              {source === 'pendata' && entry.can_load_iso && !entry.registered_image_id && (
+                <button className="btn btn-sm btn-primary" onClick={() => loadIso(entry)} disabled={busy}>
+                  Load ISO
+                </button>
+              )}
+              {source === 'pendata' && entry.can_load_iso && entry.registered_image_id && (
+                <span className="tag">available in Systems</span>
+              )}
               <button className="btn btn-sm" onClick={() => setClipboard({ source, entry, move: false })}>Copy</button>
               {!readOnly && !entry.protected && <button className="btn btn-sm" onClick={() => setClipboard({ source, entry, move: true })}>Move</button>}
               {!readOnly && !entry.protected && <button className="btn btn-sm" onClick={() => { setRenaming(entry); setRenameName(entry.name); }}>Rename</button>}

@@ -15,6 +15,7 @@ from isofactory import (
     FEDORA_LIVE_ISOLINUX_FILES,
     GENERIC_EFI_FILES,
     PROXMOX_FILES,
+    SYSTEMRESCUE_FILES,
     UBUNTU_FILES,
     UNKNOWN_FILES,
     build_iso,
@@ -30,6 +31,7 @@ from isofactory import (
         (FEDORA_FILES, "fedora"),
         (ARCH_FILES, "arch"),
         (PROXMOX_FILES, "proxmox"),
+        (SYSTEMRESCUE_FILES, "systemrescue"),
         (GENERIC_EFI_FILES, "generic"),
     ],
 )
@@ -76,6 +78,30 @@ def test_prepare_debian_uses_findiso(tmp_path):
     assert "boot=live" in cfg.cmdline
     assert "findiso=/images/debian.iso" in cfg.cmdline
     assert "live-media=/dev/disk/by-label/PENDATA" in cfg.cmdline
+
+
+def test_prepare_proxmox_passes_complete_iso_inside_initramfs(tmp_path):
+    iso_path = build_iso(tmp_path / "proxmox.iso", PROXMOX_FILES)
+    extract_dir = tmp_path / "ex"
+    _, cfg = prepare_boot(iso_path, extract_dir, "images/proxmox.iso")
+
+    assert cfg.cmdline == "ro ramdisk_size=16777216 rw quiet splash=silent"
+    assert "findiso=" not in cfg.cmdline
+    assert cfg.initrd_files == {"/proxmox.iso": "proxmox.iso"}
+    assert (extract_dir / "proxmox.iso").read_bytes() == iso_path.read_bytes()
+
+
+def test_prepare_systemrescue_uses_its_documented_loopback_parameters(tmp_path):
+    iso_path = build_iso(tmp_path / "systemrescue.iso", SYSTEMRESCUE_FILES)
+    extract_dir = tmp_path / "ex"
+    adapter, cfg = prepare_boot(iso_path, extract_dir, "images/systemrescue.iso")
+
+    assert adapter.family == "systemrescue"
+    assert cfg.method == "linux"
+    assert "img_label=PENDATA" in cfg.cmdline
+    assert "img_loop=/images/systemrescue.iso" in cfg.cmdline
+    assert (extract_dir / cfg.kernel).read_bytes() == b"fake-systemrescue-kernel"
+    assert (extract_dir / cfg.initrd).read_bytes() == b"fake-systemrescue-initrd"
 
 
 def test_prepare_fedora_live_uses_the_iso_label_and_file_path(tmp_path):

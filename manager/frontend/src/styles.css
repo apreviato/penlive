@@ -1264,6 +1264,11 @@ select.input {
   gap: 6px;
 }
 
+.vm-saved-while-running {
+  flex: 0 0 auto;
+  margin-top: 24px;
+}
+
 .console {
   flex: 1;
   min-height: 240px;

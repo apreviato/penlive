@@ -23,13 +23,18 @@ export default function SecureBootPanel() {
   const [state, setState] = useState(null);
   const [enrolment, setEnrolment] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
   const refresh = useCallback(async () => {
+    setLoading(true);
+    setError(null);
     try {
       setState(await api.secureBootState());
     } catch (err) {
       setError(err.message);
+    } finally {
+      setLoading(false);
     }
   }, []);
 
@@ -57,7 +62,15 @@ export default function SecureBootPanel() {
   if (!state) {
     return (
       <div className="card">
-        <span className="spinner" /> Checking Secure Boot…
+        {loading ? (
+          <><span className="spinner" /> Checking Secure Boot…</>
+        ) : (
+          <div className="sb-row">
+            <span className="badge badge-sb-warn">Check failed</span>
+            <span>{error || 'Secure Boot status could not be read.'}</span>
+            <button className="btn btn-sm" onClick={refresh}>Retry</button>
+          </div>
+        )}
       </div>
     );
   }

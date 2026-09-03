@@ -34,16 +34,154 @@ def test_truncated_variable_is_not_treated_as_enabled(monkeypatch, tmp_path):
     assert secureboot.is_enabled() is False
 
 
-def test_key_exists_needs_both_private_key_and_der(monkeypatch, tmp_path):
-    key, der = tmp_path / "k.key", tmp_path / "k.der"
+def test_key_exists_needs_complete_key_and_certificate_set(monkeypatch, tmp_path):
+    key, crt, der = tmp_path / "k.key", tmp_path / "k.crt", tmp_path / "k.der"
     monkeypatch.setattr(secureboot, "MOK_KEY", key)
+    monkeypatch.setattr(secureboot, "MOK_CRT", crt)
     monkeypatch.setattr(secureboot, "MOK_DER", der)
 
     assert secureboot.key_exists() is False
     key.write_text("x")
     assert secureboot.key_exists() is False, "a key without its DER cannot be enrolled"
     der.write_text("x")
+    assert secureboot.key_exists() is False, "the PEM certificate is also needed by sbsign"
+    crt.write_text("x")
     assert secureboot.key_exists() is True
+
+
+def test_enrolment_checks_the_exact_local_certificate(monkeypatch, tmp_path):
+    import hashlib
+
+    der = tmp_path / "current.der"
+    der.write_bytes(b"certificate")
+    monkeypatch.setattr(secureboot, "MOK_DER", der)
+    calls = []
+
+    class Result:
+        returncode = 0
+        stdout = "SHA1 Fingerprint: " + ":".join(
+            a + b for a, b in zip(*[iter(hashlib.sha1(b"certificate").hexdigest().upper())] * 2)
+        )
+
+    def run(command, **_kwargs):
+        calls.append(command)
+        return Result()
+
+    monkeypatch.setattr(secureboot.subprocess, "run", run)
+
+    assert secureboot.is_enrolled() is True
+    assert calls == [["mokutil", "--list-enrolled"]]
+
+
+def test_old_key_with_same_subject_does_not_count_as_current(monkeypatch, tmp_path):
+    der = tmp_path / "current.der"
+    der.write_bytes(b"certificate")
+    monkeypatch.setattr(secureboot, "MOK_DER", der)
+
+    class Result:
+        returncode = 0
+        stdout = "SHA1 Fingerprint: 00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33"
+
+    monkeypatch.setattr(secureboot.subprocess, "run", lambda *_a, **_k: Result())
+    assert secureboot.is_enrolled() is False
+
+
+def test_pending_check_uses_only_the_pending_database(monkeypatch, tmp_path):
+    import hashlib
+
+    der = tmp_path / "current.der"
+    der.write_bytes(b"certificate")
+    monkeypatch.setattr(secureboot, "MOK_DER", der)
+    fingerprint = hashlib.sha1(b"certificate").hexdigest().upper()
+    formatted = ":".join(fingerprint[index:index + 2] for index in range(0, 40, 2))
+    calls = []
+
+    class Result:
+        returncode = 0
+        stdout = f"SHA1 Fingerprint={formatted}"
+
+    def run(command, **_kwargs):
+        calls.append(command)
+        return Result()
+
+    monkeypatch.setattr(secureboot.subprocess, "run", run)
+    assert secureboot.is_pending() is True
+    assert calls == [["mokutil", "--list-new"]]
+
+
+@pytest.mark.asyncio
+async def test_daemon_verifies_signed_kernel_before_publishing_it(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    from app import paths
+    from app.daemon import server
+
+    cache = tmp_path / "extracted"
+    target = cache / "fedora" / "vmlinuz"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"original kernel")
+    key, crt, der = (tmp_path / name for name in ("mok.key", "mok.crt", "mok.der"))
+    for item in (key, crt, der):
+        item.write_bytes(b"key material")
+    monkeypatch.setattr(paths, "EXTRACTED_DIR", cache)
+    monkeypatch.setattr(secureboot, "MOK_KEY", key)
+    monkeypatch.setattr(secureboot, "MOK_CRT", crt)
+    monkeypatch.setattr(secureboot, "MOK_DER", der)
+
+    commands = []
+
+    def run(command, **_kwargs):
+        commands.append(command)
+        if command[0] == "sbsign":
+            output = command[command.index("--output") + 1]
+            from pathlib import Path
+            Path(output).write_bytes(b"verified signed kernel")
+        return SimpleNamespace(returncode=0, stdout="Signature verification OK", stderr="")
+
+    monkeypatch.setattr(server.subprocess, "run", run)
+    result = await server.handle_sign_kernel({"path": str(target)})
+
+    assert result["verified"] is True
+    assert target.read_bytes() == b"verified signed kernel"
+    assert [command[0] for command in commands] == ["sbsign", "sbverify"]
+    assert str(crt) in commands[1]
+
+
+@pytest.mark.asyncio
+async def test_daemon_keeps_original_kernel_when_signature_verification_fails(
+    monkeypatch, tmp_path
+):
+    from types import SimpleNamespace
+
+    from app import paths
+    from app.daemon import server
+
+    cache = tmp_path / "extracted"
+    target = cache / "fedora" / "vmlinuz"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"original kernel")
+    key, crt, der = (tmp_path / name for name in ("mok.key", "mok.crt", "mok.der"))
+    for item in (key, crt, der):
+        item.write_bytes(b"key material")
+    monkeypatch.setattr(paths, "EXTRACTED_DIR", cache)
+    monkeypatch.setattr(secureboot, "MOK_KEY", key)
+    monkeypatch.setattr(secureboot, "MOK_CRT", crt)
+    monkeypatch.setattr(secureboot, "MOK_DER", der)
+
+    def run(command, **_kwargs):
+        if command[0] == "sbsign":
+            output = command[command.index("--output") + 1]
+            from pathlib import Path
+            Path(output).write_bytes(b"bad signed output")
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        return SimpleNamespace(returncode=1, stdout="", stderr="signature verification failed")
+
+    monkeypatch.setattr(server.subprocess, "run", run)
+
+    with pytest.raises(RuntimeError, match="did not pass verification"):
+        await server.handle_sign_kernel({"path": str(target)})
+    assert target.read_bytes() == b"original kernel"
+    assert not target.with_suffix(".signed").exists()
 
 
 @pytest.mark.parametrize(
@@ -67,6 +205,44 @@ def test_state_summarises_what_can_actually_boot(
     st = secureboot.state()
     assert st["can_boot_downloaded"] is can_boot
     assert st["needs_enrolment"] is needs_enrolment
+
+
+def test_enrolled_and_pending_checks_run_in_parallel(monkeypatch):
+    import threading
+
+    barrier = threading.Barrier(2)
+
+    def enrolled():
+        barrier.wait(timeout=1)
+        return True
+
+    def pending():
+        barrier.wait(timeout=1)
+        return False
+
+    monkeypatch.setattr(secureboot, "is_enabled", lambda: True)
+    monkeypatch.setattr(secureboot, "key_exists", lambda: True)
+    monkeypatch.setattr(secureboot, "is_enrolled", enrolled)
+    monkeypatch.setattr(secureboot, "is_pending", pending)
+    monkeypatch.setattr(secureboot, "tools_available", lambda: True)
+
+    state = secureboot.state()
+    assert state["key_enrolled"] is True
+    assert state["key_pending"] is False
+
+
+def test_disabled_secure_boot_does_not_query_mok_firmware(monkeypatch):
+    monkeypatch.setattr(secureboot, "is_enabled", lambda: False)
+    monkeypatch.setattr(secureboot, "key_exists", lambda: True)
+    monkeypatch.setattr(
+        secureboot, "is_enrolled", lambda: pytest.fail("must not query enrolled MOKs")
+    )
+    monkeypatch.setattr(
+        secureboot, "is_pending", lambda: pytest.fail("must not query pending MOKs")
+    )
+    monkeypatch.setattr(secureboot, "tools_available", lambda: True)
+
+    assert secureboot.state()["secure_boot_enabled"] is False
 
 
 def test_enrolment_password_is_digits_only():

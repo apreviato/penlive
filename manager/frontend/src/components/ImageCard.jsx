@@ -279,7 +279,7 @@ export default function ImageCard({
           <>
             {caps.nativeBoot !== false && (
               <button className="btn btn-primary" onClick={bootNow} disabled={busy === 'boot'}>
-                {busy === 'boot' ? <span className="spinner" /> : 'Boot'}
+                {busy === 'boot' ? <><span className="spinner" /> Preparing…</> : 'Boot'}
               </button>
             )}
             {caps.vm && (

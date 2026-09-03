@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, HTTPException
 
 from .. import repo
@@ -39,7 +41,7 @@ async def write_usb(body: WriteUsbRequest):
 
 
 @router.get("/secureboot")
-def secure_boot_state():
+async def secure_boot_state():
     """What Secure Boot allows right now, and whether anything must be enrolled.
 
     Enrolment is started automatically the first time a system is scheduled for
@@ -48,9 +50,12 @@ def secure_boot_state():
     before PenLive: a user who did not write it down needs to be able to come
     back and look at it.
     """
-    state = secureboot.state()
+    # mokutil reads firmware variables and can stall on faulty firmware. Keep
+    # it out of the event loop so downloads, VM status and Cancel still answer.
+    state = await asyncio.to_thread(secureboot.state)
     state["enrolment_password"] = (
-        repo.get_setting(secureboot.ENROLMENT_PASSWORD_SETTING) if state["key_pending"] else None
+        await asyncio.to_thread(repo.get_setting, secureboot.ENROLMENT_PASSWORD_SETTING)
+        if state["key_pending"] else None
     )
     # Served rather than repeated in the frontend: the same six screens are
     # described by the boot flow and by this panel, and two copies of them
@@ -67,7 +72,7 @@ async def enrol_secure_boot_key():
     chosen by the user because that screen runs before any keymap is loaded and
     only reliably accepts digits.
     """
-    st = secureboot.state()
+    st = await asyncio.to_thread(secureboot.state)
     if st["key_enrolled"]:
         return {"already_enrolled": True}
     if not st["tools_available"]:
@@ -80,7 +85,7 @@ async def enrol_secure_boot_key():
         raise HTTPException(503, str(exc))
     except RuntimeError as exc:
         raise HTTPException(500, str(exc))
-    repo.set_setting(secureboot.ENROLMENT_PASSWORD_SETTING, password)
+    await asyncio.to_thread(repo.set_setting, secureboot.ENROLMENT_PASSWORD_SETTING, password)
 
     return {
         "pending": True,

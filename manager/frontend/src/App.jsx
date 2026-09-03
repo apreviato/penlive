@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { api } from './api/client.js';
 import { installKioskLockdown, isDevServer } from './kiosk.js';
 
@@ -13,17 +13,14 @@ import Terminal from './components/Terminal.jsx';
 import VmViewer from './components/VmViewer.jsx';
 import { PenLiveMark } from './components/Icons.jsx';
 
-// VM is deliberately absent: it only appears once there is something behind
-// it — a running machine, or a session frozen on the drive waiting to be
-// resumed or deleted. An empty VM tab is a tab with nothing to say.
 const BASE_TABS = [
   { id: 'systems', label: 'Systems' },
   { id: 'files', label: 'Files' },
   { id: 'tools', label: 'Tools' },
   { id: 'terminal', label: 'Terminal' },
+  { id: 'vm', label: 'VM' },
   { id: 'settings', label: 'Settings' },
 ];
-const VM_TAB = { id: 'vm', label: 'VM' };
 
 export default function App() {
   const [phase, setPhase] = useState('loading'); // loading | setup | main
@@ -66,12 +63,7 @@ export default function App() {
     if (!options.stay) setTab((current) => (current === 'vm' ? 'systems' : current));
   };
 
-  const hasVmContent =
-    Boolean(vmSession) || vmSessions.sessions.length > 0 || vmSessions.saving.length > 0;
-  const tabs = useMemo(
-    () => (hasVmContent ? [...BASE_TABS.slice(0, -1), VM_TAB, BASE_TABS.at(-1)] : BASE_TABS),
-    [hasVmContent]
-  );
+  const tabs = BASE_TABS;
 
   // Lock the page down in the kiosk, but never on the dev server — locking out
   // reload and devtools would make the UI impossible to work on.

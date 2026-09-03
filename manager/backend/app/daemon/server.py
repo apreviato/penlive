@@ -1161,8 +1161,20 @@ async def handle_sign_kernel(args: dict) -> dict:
     if proc.returncode != 0:
         raise RuntimeError(f"sbsign failed: {proc.stderr.strip()}")
 
+    # A zero exit from sbsign only says it wrote an output. Verify that output
+    # against the exact certificate MokManager enrolled before replacing the
+    # original kernel; otherwise the failure is discovered only by GRUB after
+    # the machine has already restarted.
+    verify = subprocess.run([
+        "sbverify", "--cert", str(sb.MOK_CRT), str(signed),
+    ], capture_output=True, text=True)
+    if verify.returncode != 0:
+        signed.unlink(missing_ok=True)
+        detail = verify.stderr.strip() or verify.stdout.strip() or f"exit {verify.returncode}"
+        raise RuntimeError(f"the signed kernel did not pass verification: {detail}")
+
     signed.replace(target)
-    return {"signed": str(target)}
+    return {"signed": str(target), "verified": True}
 
 HANDLERS = {
     "ping": handle_ping,

@@ -11,6 +11,8 @@ from __future__ import annotations
 import asyncio
 import errno
 import logging
+import secrets
+import sqlite3
 import shutil
 from pathlib import Path
 
@@ -27,6 +29,9 @@ log = logging.getLogger("penlive.boot")
 
 router = APIRouter(prefix="/api/boot", tags=["boot"])
 
+_boot_lock: asyncio.Lock | None = None
+_boot_lock_loop: asyncio.AbstractEventLoop | None = None
+
 # EROFS is the one that actually bites: ext4 turns read-only after an unclean
 # unplug. EACCES/EPERM land here too when prepare-storage.sh never got to chown
 # the extraction directory.
@@ -37,7 +42,8 @@ def _prune_extracted(keep_image_id: str) -> None:
     """Leave only the image being scheduled in PENSYS's extracted-boot cache.
 
     PENSYS is four gigabytes and already carries the live squashfs, while a
-    single installer initrd can be most of a gigabyte - Proxmox's is. Keeping
+    single boot payload can be several gigabytes - Proxmox temporarily needs
+    its complete ISO there. Keeping
     every image ever downloaded filled the partition, and a full or
     error-remounted ext4 then failed every later Boot with a read-only or
     out-of-space error that had nothing to do with the ISO being booted. Only
@@ -56,6 +62,16 @@ def _prune_extracted(keep_image_id: str) -> None:
             # Reclaiming space is an optimisation; failing to is not a reason
             # to refuse a boot that may well fit anyway.
             log.warning("could not remove stale extracted boot files %s: %s", entry, exc)
+
+
+def _get_boot_lock() -> asyncio.Lock:
+    """One preparation at a time, without binding tests/restarts to an old loop."""
+    global _boot_lock, _boot_lock_loop
+    loop = asyncio.get_running_loop()
+    if _boot_lock is None or _boot_lock_loop is not loop:
+        _boot_lock = asyncio.Lock()
+        _boot_lock_loop = loop
+    return _boot_lock
 
 
 async def _prepare_boot_recovering_readonly(iso_path: Path, extract_dir: Path, iso_rel_path: str):
@@ -99,10 +115,13 @@ async def _ensure_secure_boot_can_start(extract_dir: Path, kernel: str) -> dict 
     physical presence at the console - so when that screen is coming, the digits
     it will ask for are returned for the confirmation dialog to show.
     """
-    if not secureboot.is_enabled():
+    # mokutil can take up to 15 seconds per query on unhappy firmware. Running
+    # it on FastAPI's event loop made every status/progress request wait behind
+    # a Boot click and looked like the whole backend had frozen.
+    if not await asyncio.to_thread(secureboot.is_enabled):
         return None
 
-    state = secureboot.state()
+    state = await asyncio.to_thread(secureboot.state)
     if not state["tools_available"]:
         # Nothing to sign with. The boot is still scheduled: plenty of images
         # chainload their own signed loader, and the user can turn Secure Boot
@@ -118,7 +137,9 @@ async def _ensure_secure_boot_can_start(extract_dir: Path, kernel: str) -> dict 
 
     result: dict | None = None
     if not state["key_enrolled"]:
-        password = repo.get_setting(secureboot.ENROLMENT_PASSWORD_SETTING) or ""
+        password = await asyncio.to_thread(
+            repo.get_setting, secureboot.ENROLMENT_PASSWORD_SETTING
+        ) or ""
         if not (state["key_pending"] and password):
             password = secureboot.generate_enrolment_password()
             try:
@@ -127,7 +148,9 @@ async def _ensure_secure_boot_can_start(extract_dir: Path, kernel: str) -> dict 
                 raise HTTPException(503, str(exc))
             except RuntimeError as exc:
                 raise HTTPException(500, f"could not prepare Secure Boot for this system: {exc}")
-            repo.set_setting(secureboot.ENROLMENT_PASSWORD_SETTING, password)
+            await asyncio.to_thread(
+                repo.set_setting, secureboot.ENROLMENT_PASSWORD_SETTING, password
+            )
         result = {
             "action": "enrol",
             "password": password,
@@ -149,7 +172,51 @@ async def _ensure_secure_boot_can_start(extract_dir: Path, kernel: str) -> dict 
 
 @router.post("")
 async def schedule_boot(body: BootRequest):
-    image = repo.get_image(body.image_id)
+    lock = _get_boot_lock()
+    if lock.locked():
+        raise HTTPException(409, {
+            "error": "boot_preparation_busy",
+            "message": (
+                "Another system is already being prepared for boot. Wait for that operation "
+                "to finish or fail, then select the system you want to start."
+            ),
+        })
+
+    await lock.acquire()
+    try:
+        return await _schedule_boot(body)
+    except HTTPException:
+        raise
+    except sqlite3.OperationalError as exc:
+        reference = secrets.token_hex(4).upper()
+        log.exception("boot database operation failed [%s] image=%s", reference, body.image_id)
+        raise HTTPException(503, {
+            "error": "boot_database_busy",
+            "message": (
+                "PenLive's local database is busy. Wait a few seconds and try Boot again. "
+                f"If it continues, report reference {reference}."
+            ),
+            "reference": reference,
+        }) from exc
+    except Exception as exc:  # noqa: BLE001 - never send FastAPI's bare 500 page
+        reference = secrets.token_hex(4).upper()
+        log.exception("unexpected boot preparation failure [%s] image=%s", reference, body.image_id)
+        raise HTTPException(500, {
+            "error": "boot_preparation_failed",
+            "message": (
+                "PenLive could not prepare this system for boot. Try once more; if it repeats, "
+                f"open PENDATA/logs/manager-errors.log and report reference {reference}."
+            ),
+            "reference": reference,
+        }) from exc
+    finally:
+        lock.release()
+
+
+async def _schedule_boot(body: BootRequest):
+    # SQLite may legitimately wait for a download/catalog transaction. Never
+    # make that wait hold the event loop and stall unrelated API calls.
+    image = await asyncio.to_thread(repo.get_image, body.image_id)
     if not image or not image.get("path"):
         raise HTTPException(404, "image not downloaded")
     if not image.get("verified") and not body.allow_unverified:
@@ -166,7 +233,7 @@ async def schedule_boot(body: BootRequest):
     extract_dir = paths.EXTRACTED_DIR / body.image_id
     # Before extracting, not after: the room this frees is the room the
     # extraction below is about to need.
-    _prune_extracted(body.image_id)
+    await asyncio.to_thread(_prune_extracted, body.image_id)
     try:
         adapter, cfg = await _prepare_boot_recovering_readonly(iso_path, extract_dir, iso_rel_path)
     except NoAdapterMatched:
@@ -183,9 +250,10 @@ async def schedule_boot(body: BootRequest):
         if exc.errno == errno.ENOSPC:
             raise HTTPException(507, (
                 f"PenLive's boot partition ({paths.BOOT_MOUNT}) ran out of room for this "
-                "system's kernel. It is a small partition shared with PenLive itself; deleting "
-                "an image you no longer need frees it. Downloaded ISOs live on a separate "
-                "partition and are not what filled it."
+                "system's boot files and installer media. This is the small PENSYS system "
+                "partition, not the larger area where downloaded ISOs are stored. Restart "
+                "and try once more so stale boot files can be cleaned; if it still does not "
+                "fit, the drive must be rebuilt with a larger PENSYS partition."
             )) from exc
         if exc.errno in _NOT_WRITABLE:
             raise HTTPException(500, (

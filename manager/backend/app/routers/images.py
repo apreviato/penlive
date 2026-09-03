@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException
 
 from .. import paths, repo, schemas
 from ..services import catalog as catalog_service
+from ..services import files as file_service
 from ..services import local_images
 
 router = APIRouter(prefix="/api", tags=["images"])
@@ -36,6 +37,30 @@ async def refresh_catalog():
 async def rescan_images():
     """Import and inspect .iso files copied directly into PENDATA/images."""
     return await asyncio.to_thread(local_images.reconcile)
+
+
+@router.post("/images/import", response_model=schemas.ImageOut)
+async def import_local_iso(body: schemas.ImageImportRequest):
+    """Register one ISO selected in PENDATA/images, even if absent from catalog."""
+    try:
+        candidate = file_service.resolve(body.path, root=paths.DATA_MOUNT)
+    except file_service.FileManagerError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    images_root = paths.IMAGES_DIR.resolve()
+    if candidate.parent != images_root or not candidate.is_file() or candidate.suffix.lower() != ".iso":
+        raise HTTPException(400, "only ISO files directly inside PENDATA/images can be loaded")
+
+    await asyncio.to_thread(local_images.reconcile)
+    image = next(
+        (
+            item for item in await asyncio.to_thread(repo.list_images)
+            if item.get("path") and Path(item["path"]).resolve() == candidate
+        ),
+        None,
+    )
+    if image is None:
+        raise HTTPException(422, "PenLive could not register the selected ISO")
+    return image
 
 
 @router.delete("/images/{image_id}")

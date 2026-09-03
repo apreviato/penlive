@@ -16,7 +16,7 @@ function when(value) {
 }
 
 export default function VmSessions({
-  sessions, saving, busyId, onResume, onDelete, compact = false,
+  sessions, saving, busyId, onResume, onDelete, compact = false, activeId = null,
 }) {
   const hasAny = sessions.length > 0 || saving.length > 0;
   if (!hasAny) {
@@ -88,15 +88,22 @@ export default function VmSessions({
             <button
               className="btn btn-primary"
               onClick={() => onResume(session)}
-              disabled={!session.usable || busyId === session.image_id}
-              title={session.usable ? 'Start this system where it left off' : session.unusable_reason}
+              disabled={!session.usable || busyId === session.image_id || activeId === session.image_id}
+              title={
+                activeId === session.image_id
+                  ? 'This virtual machine is already running'
+                  : session.usable ? 'Start this system where it left off' : session.unusable_reason
+              }
             >
-              {busyId === session.image_id ? <span className="spinner" /> : 'Resume'}
+              {busyId === session.image_id
+                ? <span className="spinner" />
+                : activeId === session.image_id ? 'Running' : 'Resume'}
             </button>
             <button
               className="btn btn-danger"
               onClick={() => onDelete(session)}
-              disabled={busyId === session.image_id}
+              disabled={busyId === session.image_id || activeId === session.image_id}
+              title={activeId === session.image_id ? 'Stop the VM before deleting its checkpoint' : null}
             >
               Delete
             </button>

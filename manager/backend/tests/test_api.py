@@ -3,7 +3,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import repo
+from app import paths
 from app.main import app
+from isofactory import DEBIAN_LIVE_FILES, build_iso
 
 CATALOG_ENTRY = {
     "id": "debian-13-live-standard",
@@ -57,6 +59,52 @@ def test_list_images_reflects_db(client):
     body = client.get("/api/images").json()
     ids = [i["id"] for i in body]
     assert "debian-13-live-standard" in ids
+
+
+def test_file_viewer_can_import_an_iso_absent_from_catalog(client, tmp_path, monkeypatch):
+    data = tmp_path / "data"
+    images = data / "images"
+    extracted = tmp_path / "boot" / "extracted"
+    iso = build_iso(images / "My Offline Rescue.iso", DEBIAN_LIVE_FILES)
+    monkeypatch.setattr(paths, "DATA_MOUNT", data)
+    monkeypatch.setattr(paths, "IMAGES_DIR", images)
+    monkeypatch.setattr(paths, "EXTRACTED_DIR", extracted)
+
+    before = client.get("/api/files", params={"path": "images", "source": "pendata"})
+    assert before.status_code == 200
+    entry = next(item for item in before.json()["entries"] if item["name"] == iso.name)
+    assert entry["can_load_iso"] is True
+    assert entry["registered_image_id"] is None
+
+    imported = client.post("/api/images/import", json={"path": entry["path"]})
+    assert imported.status_code == 200
+    image = imported.json()
+    assert image["name"] == "My Offline Rescue"
+    assert image["origin"] == "local"
+    assert image["status"] == "ready"
+    assert image["id"] in {item["id"] for item in client.get("/api/images").json()}
+
+    after = client.get("/api/files", params={"path": "images", "source": "pendata"})
+    loaded = next(item for item in after.json()["entries"] if item["name"] == iso.name)
+    assert loaded["registered_image_id"] == image["id"]
+
+
+def test_file_viewer_import_rejects_iso_outside_images(client, tmp_path, monkeypatch):
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / "elsewhere.iso").write_bytes(b"not an ISO")
+    (data / "images").mkdir()
+    monkeypatch.setattr(paths, "DATA_MOUNT", data)
+    monkeypatch.setattr(paths, "IMAGES_DIR", data / "images")
+
+    listing = client.get("/api/files", params={"source": "pendata"}).json()
+    entry = next(item for item in listing["entries"] if item["name"] == "elsewhere.iso")
+    assert entry["iso"] is True
+    assert entry["can_load_iso"] is False
+
+    response = client.post("/api/images/import", json={"path": "elsewhere.iso"})
+    assert response.status_code == 400
+    assert "PENDATA/images" in response.json()["detail"]
 
 
 def test_get_unknown_image_404(client):

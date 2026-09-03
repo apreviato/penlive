@@ -66,7 +66,7 @@ async def test_image_row_is_updated_before_the_download_row_completes(staged, mo
         "debian-13-live-standard", staged["download_id"],
         {"files": [{"path": str(staged["part"])}]}, staged["sha256"],
     )
-    assert seen == ["downloaded"]
+    assert seen == ["inspecting"]
 
 
 # ---- cancel that never settled ----------------------------------------------

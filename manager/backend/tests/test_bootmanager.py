@@ -32,17 +32,31 @@ def test_linux_menuentry_paths_are_bootsys_relative():
     assert "search --no-floppy --set=root --label PENSYS" in text
 
 
-def test_chainload_menuentry_loads_exfat_and_loopback_modules():
-    """Chainloading reads the ISO off the exFAT PENDATA partition from inside
-    GRUB itself, so those modules must be loaded; the linux method doesn't
-    need them because only the booted kernel touches PENDATA."""
+def test_linux_menuentry_can_append_named_files_to_the_initramfs():
+    cfg = BootConfig(
+        method="linux", kernel="linux26", initrd="initrd.img",
+        cmdline="ramdisk_size=16777216 rw quiet", label="Proxmox",
+        initrd_files={"/proxmox.iso": "proxmox.iso"},
+    )
+    text = render_menuentry(cfg, "proxmox-ve-9", "Proxmox VE")
+    initrd_line = next(line for line in text.splitlines() if line.strip().startswith("initrd"))
+
+    assert "($root)/extracted/proxmox-ve-9/initrd.img" in initrd_line
+    assert "newc:/proxmox.iso:($root)/extracted/proxmox-ve-9/proxmox.iso" in initrd_line
+
+
+def test_chainload_menuentry_uses_modules_preloaded_by_the_main_config():
+    """The main config loads exFAT/loopback only outside shim lockdown.
+
+    Repeating insmod inside a generated entry emits "prohibited by secure boot"
+    on signed GRUB and adds no capability the main config did not establish.
+    """
     cfg = BootConfig(
         method="chainload", label="GParted",
         efi_chain_path="EFI/BOOT/BOOTX64.EFI", iso_rel_path="images/gparted.iso",
     )
     text = render_menuentry(cfg, "gparted", "GParted Live")
-    assert "insmod exfat" in text
-    assert "insmod loopback" in text
+    assert "insmod " not in text
     assert "loopback loop ($dataroot)$isofile" in text
     assert "chainloader (loop)/EFI/BOOT/BOOTX64.EFI" in text
     assert "--label PENDATA" in text

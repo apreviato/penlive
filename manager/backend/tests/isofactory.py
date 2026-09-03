@@ -123,6 +123,12 @@ PROXMOX_FILES = {
     "/boot/initrd.img": b"fake-pve-initrd",
 }
 
+SYSTEMRESCUE_FILES = {
+    "/sysresccd/boot/x86_64/vmlinuz": b"fake-systemrescue-kernel",
+    "/sysresccd/boot/x86_64/sysresccd.img": b"fake-systemrescue-initrd",
+    "/EFI/BOOT/BOOTX64.EFI": b"fake-efi-loader",
+}
+
 GENERIC_EFI_FILES = {
     "/EFI/BOOT/BOOTX64.EFI": b"fake-efi-only",
     "/readme.txt": b"some rescue tool",

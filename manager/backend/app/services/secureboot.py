@@ -16,9 +16,13 @@ at the console. That is a feature, not an obstacle to route around.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
+import os
+import re
 import secrets
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from .. import paths
@@ -36,6 +40,7 @@ MOK_CRT = MOK_DIR / "penlive.crt"
 MOK_DER = MOK_DIR / "penlive.der"
 
 MOK_SUBJECT = "/CN=PenLive machine owner key/"
+MOK_QUERY_TIMEOUT_SECONDS = 5
 
 # Settings key holding the digits MokManager will ask for. It is kept because
 # that prompt appears before PenLive is running: a user who did not write the
@@ -55,47 +60,72 @@ def is_enabled() -> bool:
 
 
 def key_exists() -> bool:
-    return MOK_KEY.is_file() and MOK_DER.is_file()
+    return MOK_KEY.is_file() and MOK_CRT.is_file() and MOK_DER.is_file()
 
 
 def is_enrolled() -> bool:
-    """True when our certificate is already in the MOK database.
+    """True only when the exact local certificate is in the MOK database.
 
-    Checks enrolled keys, not pending ones: a key that has been imported but
-    not yet confirmed at the MokManager screen cannot sign anything usable.
+    Searching ``--list-enrolled`` by subject was unsafe: a regenerated key has
+    the same PenLive subject as the old one but a different public key. That
+    false positive made us sign a kernel with a key GRUB did not trust.
     """
-    if not MOK_CRT.is_file():
-        return False
-    try:
-        out = subprocess.run(
-            ["mokutil", "--list-enrolled"], capture_output=True, text=True, timeout=15
-        ).stdout
-    except (FileNotFoundError, subprocess.SubprocessError):
-        return False
-    return "PenLive machine owner key" in out
+    return _mok_list_contains("--list-enrolled")
 
 
 def is_pending() -> bool:
     """True when a key is imported but still awaiting confirmation at reboot."""
+    return _mok_list_contains("--list-new")
+
+
+def _mok_list_contains(option: str) -> bool:
+    """Match our exact DER fingerprint in one specific shim MOK database.
+
+    ``mokutil --test-key`` is not suitable here because versions differ on
+    whether a pending key counts as found. Enrolled and pending drive different
+    UI/boot decisions, so query the two lists separately.
+    """
     try:
-        out = subprocess.run(
-            ["mokutil", "--list-new"], capture_output=True, text=True, timeout=15
-        ).stdout
+        wanted = hashlib.sha1(MOK_DER.read_bytes()).hexdigest()  # noqa: S324 - certificate ID
+    except OSError:
+        return False
+    try:
+        proc = subprocess.run(
+            ["mokutil", option], capture_output=True, text=True,
+            timeout=MOK_QUERY_TIMEOUT_SECONDS,
+            env={**os.environ, "LC_ALL": "C"},
+        )
     except (FileNotFoundError, subprocess.SubprocessError):
         return False
-    return "PenLive machine owner key" in out
+    if proc.returncode != 0:
+        return False
+    for line in proc.stdout.splitlines():
+        match = re.search(r"fingerprint\s*[:=]\s*([0-9a-f: ]+)", line, re.IGNORECASE)
+        if match and re.sub(r"[^0-9a-f]", "", match.group(1).lower()) == wanted:
+            return True
+    return False
 
 
 def tools_available() -> bool:
     import shutil
 
-    return all(shutil.which(b) for b in ("sbsign", "mokutil", "openssl"))
+    return all(shutil.which(b) for b in ("sbsign", "sbverify", "mokutil", "openssl"))
 
 
 def state() -> dict:
     enabled = is_enabled()
-    enrolled = is_enrolled()
-    pending = is_pending()
+    # These are two independent EFI-variable reads. Running them sequentially
+    # made Settings wait up to 30 seconds on slow firmware, past the browser's
+    # request timeout. If there is no local key there is nothing to look up.
+    if enabled and key_exists():
+        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="mok-state") as pool:
+            enrolled_future = pool.submit(is_enrolled)
+            pending_future = pool.submit(is_pending)
+            enrolled = enrolled_future.result()
+            pending = pending_future.result()
+    else:
+        enrolled = False
+        pending = False
     return {
         "secure_boot_enabled": enabled,
         "tools_available": tools_available(),

@@ -361,10 +361,12 @@ async def _finish_resume(image_id: str, running: RunningVm) -> None:
         await stop(image_id)
         return
     running.restoring = False
-    # Only now, with the guest actually running, is the stream spent.
-    vmsession.delete(image_id)
+    # A checkpoint is durable user data, not a one-shot stream. Keep it after
+    # a successful resume so opening/stopping other VMs cannot make it vanish.
+    # Saving this same VM again atomically replaces it with the newer state;
+    # only DELETE /api/vm/sessions/{image_id} removes it outright.
     vmsession.clear_progress(image_id)
-    log.info("resumed the saved session for %s", image_id)
+    log.info("resumed the saved session for %s; checkpoint retained", image_id)
 
 
 async def save_session(image_id: str, image_name: str | None = None) -> dict:

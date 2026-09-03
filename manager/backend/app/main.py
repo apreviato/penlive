@@ -6,11 +6,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import secrets
 from contextlib import asynccontextmanager
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import paths
@@ -25,12 +28,39 @@ from .services import (
 log = logging.getLogger("penlive.api")
 
 FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+ERROR_LOG = paths.JOB_LOG_DIR / "manager-errors.log"
+
+
+def _configure_logging() -> None:
+    """Keep actionable warnings on PENDATA without continuously writing there."""
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    root = logging.getLogger()
+    try:
+        # prepare-storage creates this on the real system. Refuse to invent it
+        # on an unmounted /data and accidentally fill the live overlay.
+        if not ERROR_LOG.parent.is_dir():
+            return
+        resolved = ERROR_LOG.resolve()
+        for handler in root.handlers:
+            if getattr(handler, "baseFilename", None) == str(resolved):
+                return
+        handler = RotatingFileHandler(
+            resolved, maxBytes=2 * 1024 * 1024, backupCount=2, encoding="utf-8", delay=True
+        )
+        handler.setLevel(logging.WARNING)
+        handler.setFormatter(logging.Formatter(
+            "%(asctime)s %(levelname)s %(name)s: %(message)s"
+        ))
+        root.addHandler(handler)
+    except OSError:
+        # The journal remains available even if PENDATA itself is read-only.
+        log.warning("could not enable persistent manager error log", exc_info=True)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     paths.ensure_dirs()
+    _configure_logging()
     # A scheduled boot is for the next restart and that restart only. PenLive
     # being up means it already happened (or was passed over), so the selection
     # is retired here rather than left to fire again on some later reboot.
@@ -69,6 +99,30 @@ async def _seed_catalog_and_scan_images() -> None:
 
 
 app = FastAPI(title="PenLive Manager", lifespan=lifespan)
+
+
+@app.exception_handler(Exception)
+async def unexpected_error(request: Request, exc: Exception) -> JSONResponse:
+    """Turn an unhandled exception into a useful, correlated UI error."""
+    reference = secrets.token_hex(4).upper()
+    log.exception(
+        "unhandled API failure [%s] %s %s", reference, request.method, request.url.path,
+        exc_info=(type(exc), exc, exc.__traceback__),
+    )
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": {
+                "error": "unexpected_server_error",
+                "message": (
+                    "PenLive encountered an unexpected problem. Try the action once more; "
+                    f"if it repeats, open PENDATA/logs/manager-errors.log and report reference {reference}."
+                ),
+                "reference": reference,
+            }
+        },
+        headers={"X-PenLive-Error-Reference": reference},
+    )
 
 app.add_middleware(
     CORSMiddleware,

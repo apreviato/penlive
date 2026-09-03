@@ -600,7 +600,7 @@ async def test_a_resume_that_fails_keeps_the_session(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_a_resume_that_works_spends_the_session(monkeypatch, tmp_path):
+async def test_a_resume_that_works_keeps_the_checkpoint_until_explicit_delete(monkeypatch, tmp_path):
     iso = tmp_path / "debian.iso"
     iso.write_bytes(b"iso-bytes")
     _saved("debian-live", iso)
@@ -618,7 +618,28 @@ async def test_a_resume_that_works_spends_the_session(monkeypatch, tmp_path):
 
     assert running.restoring is False
     assert running.restore_error is None
-    assert vmsession.read("debian-live") is None
+    assert vmsession.read("debian-live") is not None
+    assert vmsession.state_path("debian-live").exists()
+
+
+@pytest.mark.asyncio
+async def test_opening_another_vm_does_not_remove_existing_checkpoints(monkeypatch, tmp_path):
+    iso = tmp_path / "debian.iso"
+    iso.write_bytes(b"iso-bytes")
+    _saved("first", iso)
+    _saved("older", iso)
+    vm._running["first"] = _fake_running("first")
+
+    async def stop_previous(image_id):
+        vm._running.pop(image_id, None)
+
+    monkeypatch.setattr(vm, "stop", stop_previous)
+    try:
+        await vm._stop_others("second")
+    finally:
+        vm._running.clear()
+
+    assert {item["image_id"] for item in vmsession.list_all()} == {"first", "older"}
 
 
 def test_a_machine_that_has_already_exited_stops_claiming_to_be_running():

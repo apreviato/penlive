@@ -332,17 +332,22 @@ async def _find_remote_state(staged_path: Path) -> dict | None:
 async def _finalize(image_id: str, download_row_id: int, aria2_status: dict, expected_sha256: str | None) -> None:
     files = aria2_status.get("files") or []
     if not files:
-        repo.finish_download(download_row_id, state="error", error="aria2 reported completion with no files")
-        repo.set_image_status(image_id, "not_downloaded")
+        await asyncio.to_thread(
+            repo.finish_download, download_row_id,
+            state="error", error="aria2 reported completion with no files",
+        )
+        await asyncio.to_thread(repo.set_image_status, image_id, "not_downloaded")
         return
     part_path = Path(files[0]["path"])
 
     if expected_sha256:
         actual = await asyncio.to_thread(_sha256_of, part_path)
         if actual.lower() != expected_sha256.lower():
-            repo.finish_download(download_row_id, state="error", error="sha256 mismatch")
-            repo.set_image_status(image_id, "corrupted")
-            part_path.unlink(missing_ok=True)
+            await asyncio.to_thread(
+                repo.finish_download, download_row_id, state="error", error="sha256 mismatch"
+            )
+            await asyncio.to_thread(repo.set_image_status, image_id, "corrupted")
+            await asyncio.to_thread(part_path.unlink, missing_ok=True)
             return
 
     final_path = paths.IMAGES_DIR / part_path.name
@@ -353,11 +358,15 @@ async def _finalize(image_id: str, download_row_id: int, aria2_status: dict, exp
     # reads "complete", and the UI reloads the image list on that message. Flip
     # the image row first or that reload races the update and leaves the card
     # stuck on "downloading" until the user hits Refresh catalog.
-    repo.set_image_status(
-        image_id, "downloaded", path=str(final_path), size_bytes=final_path.stat().st_size,
+    # Do not expose Boot yet. Adapter inspection reads the ISO and may take
+    # several seconds on a flash drive; starting Boot in parallel caused two
+    # full media reads to fight each other immediately after a download.
+    await asyncio.to_thread(
+        repo.set_image_status,
+        image_id, "inspecting", path=str(final_path), size_bytes=final_path.stat().st_size,
         verified=bool(expected_sha256), inspection_error=None,
     )
-    repo.finish_download(download_row_id, state="complete")
+    await asyncio.to_thread(repo.finish_download, download_row_id, state="complete")
 
     await _inspect(image_id, final_path)
 
@@ -371,8 +380,17 @@ async def _inspect(image_id: str, iso_path: Path) -> None:
     """
     try:
         await asyncio.to_thread(process_downloaded_image, image_id, iso_path)
-    except Exception:  # noqa: BLE001 - a boot-adapter miss shouldn't undo a good, verified download
+        # Defensive fallback for an inspector implementation that returns
+        # without publishing a capability decision.
+        image = await asyncio.to_thread(repo.get_image, image_id)
+        if image and image.get("status") == "inspecting":
+            await asyncio.to_thread(repo.set_image_status, image_id, "downloaded")
+    except Exception as exc:  # noqa: BLE001 - a boot-adapter miss shouldn't undo a good, verified download
         log.exception("post-download adapter detection failed for %s", image_id)
+        await asyncio.to_thread(
+            repo.set_image_status, image_id, "downloaded",
+            inspection_error=f"could not inspect this image: {exc}",
+        )
 
 
 def _sha256_of(path: Path) -> str:

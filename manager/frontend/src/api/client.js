@@ -12,6 +12,9 @@ const DEFAULT_TIMEOUT_MS = 20000;
 // real error, not be cut off here first.
 const SLOW_TIMEOUT_MS = 120000;
 const SLOW = { timeout: SLOW_TIMEOUT_MS };
+// Proxmox has to stage its complete source ISO into the boot initramfs. On a
+// modest USB stick that is valid work lasting longer than an ordinary API call.
+const BOOT_TIMEOUT_MS = 10 * 60 * 1000;
 
 async function request(path, options = {}) {
   const { timeout = DEFAULT_TIMEOUT_MS, ...init } = options;
@@ -40,7 +43,8 @@ async function request(path, options = {}) {
       const body = await res.json();
       detail = body.detail ?? detail;
       if (detail && typeof detail === 'object') {
-        detail = detail.message || detail.error || JSON.stringify(detail);
+        const reference = detail.reference ? ` Reference: ${detail.reference}.` : '';
+        detail = `${detail.message || detail.error || JSON.stringify(detail)}${reference}`;
       }
     } catch {
       // Non-JSON error body (e.g. a proxy timeout page); statusText is the best we have.
@@ -83,6 +87,9 @@ export const api = {
   // images / catalog
   listImages: () => request('/api/images'),
   rescanImages: () => request('/api/images/rescan', { method: 'POST', ...SLOW }),
+  importImage: (path) => request('/api/images/import', {
+    method: 'POST', body: JSON.stringify({ path }), ...SLOW,
+  }),
   refreshCatalog: () => request('/api/catalog/refresh', { method: 'POST', ...SLOW }),
   deleteImage: (id) => request(`/api/images/${id}`, { method: 'DELETE', ...SLOW }),
   storage: () => request('/api/storage'),
@@ -117,7 +124,7 @@ export const api = {
     request('/api/boot', {
       method: 'POST',
       body: JSON.stringify({ image_id: imageId, method: 'auto', allow_unverified: allowUnverified }),
-      ...SLOW,
+      timeout: BOOT_TIMEOUT_MS,
     }),
   pendingBoot: () => request('/api/boot/pending'),
   // SLOW: the daemon answers as soon as the boot entry is armed, but it

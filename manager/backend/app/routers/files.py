@@ -106,7 +106,22 @@ async def unmount_device(body: schemas.DeviceMountRequest):
 async def list_files(path: str = Query(""), source: str = Query("pendata")):
     try:
         root, managed, label = await _source_root(source)
-        return {**file_service.list_directory(path, root=root, managed=managed), "source": source, "label": label}
+        result = await asyncio.to_thread(
+            file_service.list_directory, path, root=root, managed=managed
+        )
+        if source == "pendata":
+            registered = {
+                str(Path(image["path"]).resolve()): image["id"]
+                for image in await asyncio.to_thread(repo.list_images)
+                if image.get("path")
+            }
+            for entry in result["entries"]:
+                if not entry.get("iso"):
+                    continue
+                absolute = str((root / entry["path"]).resolve())
+                entry["registered_image_id"] = registered.get(absolute)
+                entry["can_load_iso"] = Path(entry["path"]).parent == Path("images")
+        return {**result, "source": source, "label": label}
     except file_service.FileManagerError as exc:
         raise _bad_request(exc)
 

@@ -24,6 +24,10 @@ class BootConfig:
     kernel: str | None = None
     initrd: str | None = None
     cmdline: str | None = None
+    # "linux" method only: extra files GRUB must pack into a trailing newc
+    # archive. Proxmox uses this for /proxmox.iso, its documented PXE path;
+    # unlike GRUB's loop device, that file survives into the running initramfs.
+    initrd_files: dict[str, str] | None = None
     # Path on PENDATA, relative to that partition's root, e.g. "images/x.iso".
     iso_rel_path: str | None = None
     # "chainload" method only: path to the ISO's own EFI loader, e.g. "EFI/BOOT/BOOTX64.EFI".

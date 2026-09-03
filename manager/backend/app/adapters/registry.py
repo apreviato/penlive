@@ -11,6 +11,7 @@ from .fedora import FedoraAdapter
 from .generic import GenericEfiAdapter
 from .iso import IsoImage
 from .proxmox import ProxmoxAdapter
+from .systemrescue import SystemRescueAdapter
 from .ubuntu import UbuntuAdapter
 from .windows import WindowsAdapter
 
@@ -24,6 +25,7 @@ REGISTRY: list[BootAdapter] = [
     DebianInstallerAdapter(),
     FedoraAdapter(),
     ArchAdapter(),
+    SystemRescueAdapter(),
     ProxmoxAdapter(),
     GenericEfiAdapter(),
 ]

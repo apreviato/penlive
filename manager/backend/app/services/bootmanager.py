@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -37,12 +38,18 @@ PROC_UPTIME = Path("/proc/uptime")
 def _linux_menuentry(cfg: BootConfig, image_id: str, label: str) -> str:
     kernel_path = f"extracted/{image_id}/{cfg.kernel}"
     initrd_path = f"extracted/{image_id}/{cfg.initrd}"
+    extra_initrds = " ".join(
+        f"newc:{name}:($root)/extracted/{image_id}/{filename}"
+        for name, filename in (cfg.initrd_files or {}).items()
+    )
+    initrd_command = " ".join(
+        value for value in (f"($root)/{initrd_path}", extra_initrds) if value
+    )
     return (
         f'menuentry "Pending: {label}" --id pending_boot {{\n'
-        f"    insmod ext2\n"
         f"    search --no-floppy --set=root --label PENSYS\n"
         f"    linux ($root)/{kernel_path} {cfg.cmdline}\n"
-        f"    initrd ($root)/{initrd_path}\n"
+        f"    initrd {initrd_command}\n"
         f"}}\n"
     )
 
@@ -50,11 +57,6 @@ def _linux_menuentry(cfg: BootConfig, image_id: str, label: str) -> str:
 def _chainload_menuentry(cfg: BootConfig, label: str) -> str:
     return (
         f'menuentry "Pending: {label}" --id pending_boot {{\n'
-        f"    insmod ext2\n"
-        f"    insmod exfat\n"
-        f"    insmod loopback\n"
-        f"    insmod iso9660\n"
-        f"    insmod chain\n"
         f"    search --no-floppy --set=root --label PENSYS\n"
         f'    set isofile="/{cfg.iso_rel_path}"\n'
         f"    search --no-floppy --set=dataroot --label PENDATA\n"
@@ -79,7 +81,6 @@ def _wimboot_menuentry(cfg: BootConfig, image_id: str, label: str) -> str:
     )
     return (
         f'menuentry "Pending: {label}" --id pending_boot {{\n'
-        f"    insmod ext2\n"
         f"    search --no-floppy --set=root --label PENSYS\n"
         f"    linux ($root)/{base}/{cfg.kernel}\n"
         f"    initrd {members}\n"
@@ -113,7 +114,9 @@ async def schedule_boot(image_id: str, adapter_family: str, cfg: BootConfig, lab
         "created_at": datetime.now(timezone.utc).isoformat(),
     })
     result = await daemon_client.call("write_nextboot", cfg_text=cfg_text, json_text=json_text)
-    repo.create_boot(image_id, adapter_family, cfg.method)
+    # A concurrent download/catalog write can hold SQLite briefly. Keep that
+    # wait away from the API event loop after the boot entry is already armed.
+    await asyncio.to_thread(repo.create_boot, image_id, adapter_family, cfg.method)
     return (result or {}).get("warning")
 
 

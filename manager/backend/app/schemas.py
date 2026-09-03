@@ -34,6 +34,10 @@ class DownloadStart(BaseModel):
     image_id: str
 
 
+class ImageImportRequest(BaseModel):
+    path: str
+
+
 class DownloadOut(BaseModel):
     id: int
     image_id: str

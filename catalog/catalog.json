@@ -211,8 +211,8 @@
       "family": "alpine",
       "version": "3.24.1",
       "architecture": "x86_64",
-      "adapter": "generic",
-      "_comment": "No dedicated adapter yet; boots via GenericEfiAdapter chainload. The registry re-detects at boot time, so this field is advisory.",
+      "adapter": null,
+      "_comment": "Alpine documents that GRUB loopback reaches an initramfs recovery shell unless its media is mounted manually. Native Boot stays disabled until PenLive can provide that media automatically.",
       "sources": [
         {
           "url": "https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/x86_64/alpine-standard-3.24.1-x86_64.iso"
@@ -222,7 +222,7 @@
       "size": 369098752,
       "checksum_source": "https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/x86_64/alpine-standard-3.24.1-x86_64.iso.sha256",
       "capabilities": {
-        "nativeBoot": true,
+        "nativeBoot": false,
         "kexec": false,
         "vm": true,
         "mount": true
@@ -571,8 +571,8 @@
       "family": "systemrescue",
       "version": "13.02",
       "architecture": "amd64",
-      "adapter": "generic",
-      "_comment": "archiso-derived, but its kernel lives under /sysresccd/ where ArchAdapter does not look, so it falls back to GenericEfiAdapter chainload. The registry re-detects at boot time, so this field is advisory.",
+      "adapter": "systemrescue",
+      "_comment": "Uses SystemRescue's documented img_label/img_loop GRUB path through its dedicated adapter.",
       "sources": [
         {
           "url": "https://fastly-cdn.system-rescue.org/releases/13.02/systemrescue-13.02-amd64.iso"
@@ -594,8 +594,8 @@
       "family": "opensuse",
       "version": "20260830",
       "architecture": "x86_64",
-      "adapter": "generic",
-      "_comment": "No dedicated adapter yet; boots via GenericEfiAdapter chainload. The registry re-detects at boot time, so this field is advisory.",
+      "adapter": null,
+      "_comment": "The rolling installer changed media discovery across YaST and Agama generations. Native Boot stays disabled until the current catalog ISO has a version-specific tested adapter.",
       "sources": [
         {
           "url": "https://download.opensuse.org/tumbleweed/iso/openSUSE-Tumbleweed-DVD-x86_64-Current.iso"
@@ -608,7 +608,7 @@
       "version_pattern": "openSUSE-Tumbleweed-DVD-x86_64-Snapshot(\\d{8})-Media\\.iso",
       "_warning": "`Current` is a rolling alias, like Arch's: it redirects to a new snapshot every few days with a new sha256, size and file name. Re-run tools/update_catalog.py after each one or downloads will fail verification.",
       "capabilities": {
-        "nativeBoot": true,
+        "nativeBoot": false,
         "kexec": false,
         "vm": true,
         "mount": true

@@ -297,7 +297,7 @@ Debian's and Microsoft's keys:
 | Booting PenLive itself | works |
 | Running an ISO in a VM (Run VM) | works - QEMU does not involve firmware |
 | Mount, backup, repair, provisioning tools | work |
-| Booting a Debian or Ubuntu ISO by chainloading it | usually works: their own bootloader is signed too |
+| Booting an ISO by chainloading it from PENDATA | requires Secure Boot off because signed GRUB cannot load the external exFAT module |
 | Booting an ISO via the extracted kernel (`linux` method) | fails unless that kernel is Debian-signed |
 
 The `linux` method hands GRUB a kernel taken out of the ISO. Ubuntu's kernels
@@ -320,10 +320,17 @@ Enrolment takes one reboot:
    then type the code.
 4. It reboots again, and downloaded systems now boot with Secure Boot on.
 
-Until a key is enrolled, PenLive refuses to schedule such a boot with a clear
-message rather than letting the firmware fail silently after a reboot.
+Until the key is enrolled, Boot queues the exact local certificate and shows
+the code and MokManager steps. Enrolment and pending state are matched by the
+certificate fingerprint, not its display name, so an obsolete PenLive key can
+never be mistaken for the key that signed the current kernel. After `sbsign`,
+`sbverify` checks the output before it replaces the extracted kernel.
 
-One more limitation: Debian's signed GRUB has no `exfat` module, so
+Debian's signed GRUB also refuses unsigned external modules while shim
+lockdown is active. PenLive therefore loads its PENSYS module tree only outside
+Secure Boot; this avoids spurious `prohibited by secure boot policy` failures
+on native Fedora/Linux entries. One remaining limitation is that signed GRUB
+has no usable `exfat` module, so
 chainloading an ISO stored on the exFAT `PENDATA` partition fails under Secure
 Boot. Build with `--data-fs ext4` if you need that combination and can give up
 reading the stick on Windows.

@@ -114,8 +114,10 @@ messages in a row: `file exfat.mod not found`, then `no such device: PENDATA`
 `no server is specified` from a GRUB that had fallen back to reading the path
 as a network address. None of the three mention the actual problem.
 
-Secure Boot still refuses to load unsigned modules, so this fixes the
-`chainload` method for machines with Secure Boot **off**. With it on, an image
+Secure Boot still refuses to load unsigned modules. The main GRUB config uses
+the external module tree only when shim lockdown is inactive, avoiding a
+misleading `prohibited by secure boot policy` error during native Linux boots.
+This fixes the `chainload` method for machines with Secure Boot **off**. With it on, an image
 that can only be chainloaded genuinely cannot start from an exFAT partition,
 and the pending-boot banner says exactly that rather than letting the user find
 out from GRUB.
@@ -210,6 +212,13 @@ nothing is forged - the added claim is "the owner of this machine also vouches
 for this file", which is what a MOK is for. The kernel being vouched for came
 out of an ISO whose SHA-256 was checked against the vendor's own published
 checksum, so the trust is not blind.
+
+The state check compares the local DER certificate fingerprint separately
+against the enrolled and pending MOK databases. Subject-name matching is not
+sufficient because a replacement key may have the same name as an obsolete
+one. The daemon also runs `sbverify` against the signed kernel before publishing
+it into the boot cache, so a malformed signature fails while PenLive can still
+give the user a useful message.
 
 Enrolment deliberately stops at the firmware screen: MokManager demands
 physical presence, and that is the property that makes the mechanism worth
@@ -395,15 +404,19 @@ Two output methods:
   original ISO to the target OS as its root via `findiso=`,
   `iso-scan/filename=`, `inst.stage2=` and so on. Far more predictable than
   chainloading, because it does not depend on the ISO's own bootloader.
+- Proxmox is the exception to that usual file locator: its initramfs ignores
+  `findiso=` and scans only physical ISO9660 media. PenLive copies the verified
+  ISO into the one-image PENSYS cache and asks GRUB to append it to the initramfs
+  as `/proxmox.iso`, the PXE path implemented by Proxmox itself.
 - **`chainload`** — for hybrid ISOs with no dedicated adapter: `loopback` plus
   `chainloader` into the ISO's own `BOOTX64.EFI`. Extracts nothing.
 
 Inspection uses **pycdlib**, not a loop mount: reading ISO9660 in user space
 needs no root. Root only appears much later, behind the "Mount" button.
 
-> The Arch and Proxmox `cmdline` values change between releases. They are
-> marked in the code as a starting point to verify against the specific ISO,
-> not as a guarantee.
+> Arch's `cmdline` may change between releases. Proxmox uses its own graphical
+> installer's arguments and its documented initramfs media path rather than a
+> guessed Debian-style argument.
 
 ## Downloads
 

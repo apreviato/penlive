@@ -60,6 +60,12 @@ export default function VmViewer({
   const restoringRef = useRef(false);
   restoringRef.current = restoring;
 
+  // Opening a different VM must refresh, not hide, checkpoints saved by
+  // earlier machines. The backend is the source of truth on every switch.
+  useEffect(() => {
+    onSessionsChanged?.();
+  }, [session?.image?.id, onSessionsChanged]);
+
   useEffect(() => {
     if (!session || !screenRef.current) return undefined;
 
@@ -312,7 +318,8 @@ export default function VmViewer({
         <p className="section-copy">
           A saved session holds the whole machine — its memory, its open programs — on the PenLive
           drive. Resuming picks it up mid-sentence, even after this computer has been restarted.
-          Resuming uses the session up; save again to keep it.
+          It remains saved after resuming and is removed only when you choose Delete. Saving the
+          same machine again updates its checkpoint.
         </p>
         <VmSessions
           sessions={sessions}
@@ -409,6 +416,26 @@ export default function VmViewer({
           </>
         )}
       </div>
+      {(sessions.length > 0 || saving.length > 0) && !fullscreen && (
+        <section className="vm-saved-while-running">
+          <div className="section-header">
+            <h2 className="section-title">Saved sessions</h2>
+          </div>
+          <p className="section-copy">
+            These checkpoints stay on the PenLive drive while this VM is running. Resume another
+            one to switch machines, or delete one explicitly when it is no longer needed.
+          </p>
+          <VmSessions
+            sessions={sessions}
+            saving={saving}
+            busyId={sessionBusy}
+            activeId={session.image.id}
+            onResume={resumeSession}
+            onDelete={deleteSession}
+            compact
+          />
+        </section>
+      )}
       {diskDialog && (
         <div className="modal-backdrop">
           <div className="modal modal-narrow">
