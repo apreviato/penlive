@@ -44,6 +44,7 @@ IMAGES_DIR = DATA_MOUNT / "images"
 DOWNLOADS_TMP_DIR = IMAGES_DIR / ".downloads"
 CATALOG_DIR = DATA_MOUNT / "catalog"
 CATALOG_CACHE = CATALOG_DIR / "catalog.json"
+JOB_LOG_DIR = DATA_MOUNT / "logs"
 
 DB_PATH = VAR_LIB / "manager.db"
 
@@ -79,7 +80,7 @@ OFFLINE = os.environ.get("PENLIVE_OFFLINE") == "1"
 
 def ensure_dirs() -> None:
     dirs = [BOOT_MOUNT, DATA_MOUNT, STATE_DIR, EXTRACTED_DIR, IMAGES_DIR, DOWNLOADS_TMP_DIR,
-            CATALOG_DIR, VAR_LIB, LOG_DIR]
+            CATALOG_DIR, JOB_LOG_DIR, VAR_LIB, LOG_DIR]
     if not DEV_MODE:
         # On real hardware these are separate partitions mounted by fstab; creating
         # them here would silently write into the squashfs overlay instead of

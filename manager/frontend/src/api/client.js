@@ -125,6 +125,12 @@ export const api = {
 
   startVm: (imageId) =>
     request('/api/vm/start', { method: 'POST', body: JSON.stringify({ image_id: imageId }), ...SLOW }),
+  attachVmDisk: (imageId, device, confirmation) =>
+    request(`/api/vm/${imageId}/physical-disk`, {
+      method: 'POST',
+      body: JSON.stringify({ device, confirmation }),
+      ...SLOW,
+    }),
   stopVm: (imageId) => request(`/api/vm/${imageId}/stop`, { method: 'POST' }),
   vmStatus: (imageId) => request(`/api/vm/${imageId}/status`),
   mountImage: (imageId) => request(`/api/mount/${imageId}`, { method: 'POST', ...SLOW }),

@@ -143,6 +143,7 @@ def test_runtime_storage_is_writable_by_the_unprivileged_manager():
     unit = (ROOT / "systemd" / "penlive-storage.service").read_text()
     hook = (ROOT / "live" / "config" / "hooks" / "live" / "0300-enable-services.hook.chroot").read_text()
     assert "/boot/extracted" in script
+    assert "/data/logs" in script
     assert "chown -R penlive:penlive" in script
     assert "grub-editenv /boot/grub/.grubenv.tmp create" in script
     assert "mv -f /boot/grub/.grubenv.tmp /boot/grub/grubenv" in script
@@ -186,6 +187,42 @@ def test_power_services_have_bounded_stop_times():
 
     for unit in units:
         assert "TimeoutStopSec=" in unit.read_text(), unit.name
+
+
+def test_kiosk_labels_cannot_be_selected_accidentally():
+    styles = (ROOT / "manager" / "frontend" / "src" / "styles.css").read_text()
+
+    assert "user-select: none" in styles
+    assert "-webkit-user-select: none" in styles
+    # Editing and copying command output remain intentional interactions.
+    assert ".console," in styles
+    assert ".terminal-output" in styles
+    assert styles.count("user-select: text") >= 2
+
+
+def test_vm_fullscreen_has_visible_and_keyboard_escape_routes():
+    viewer = (ROOT / "manager" / "frontend" / "src" / "components" / "VmViewer.jsx").read_text()
+    styles = (ROOT / "manager" / "frontend" / "src" / "styles.css").read_text()
+
+    assert "Your physical drives are protected" in viewer
+    assert "Ctrl+Alt+F to return" in viewer
+    assert "vm-fullscreen-hotspot" in viewer
+    assert "Exit full screen" in viewer
+    assert "vm-stage-fullscreen" in styles
+    assert ".vm-status-connected" in styles
+
+
+def test_vm_direct_disk_mode_requires_explicit_destructive_confirmation():
+    viewer = (ROOT / "manager" / "frontend" / "src" / "components" / "VmViewer.jsx").read_text()
+    protocol = (ROOT / "manager" / "backend" / "app" / "daemon" / "protocol.py").read_text()
+    packages = (ROOT / "live" / "config" / "package-lists" / "penlive.list.chroot").read_text()
+
+    assert "Enable drive access" in viewer
+    assert "Type <strong>{selectedDisk}</strong> to confirm" in viewer
+    assert "diskConfirmation.trim() !== selectedDisk" in viewer
+    assert '"prepare_vm_disk"' in protocol
+    assert '"release_vm_disk"' in protocol
+    assert "\nacl\n" in packages
 
 
 def test_browser_policy_leaves_escape_shortcuts_nowhere_to_navigate():

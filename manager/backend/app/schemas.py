@@ -80,6 +80,11 @@ class VmRequest(BaseModel):
     enable_kvm: bool = True
 
 
+class VmDiskRequest(BaseModel):
+    device: str
+    confirmation: str
+
+
 class WriteUsbRequest(BaseModel):
     image_id: str
     target_device: str

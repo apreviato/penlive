@@ -11,6 +11,7 @@ nasty failure mode.
 """
 from __future__ import annotations
 
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -18,10 +19,12 @@ import threading
 from collections.abc import Iterator
 from pathlib import Path
 
+from .. import paths
 from .operations import (
     OperationError,
     require_choice,
     require_device,
+    require_disk,
     require_partition,
     require_unmounted,
 )
@@ -197,12 +200,17 @@ def provision_apply(args: dict) -> Iterator[str]:
     except Exception as exc:  # noqa: BLE001 - surfaced to the operator as a log line
         raise OperationError(str(exc)) from exc
 
-    image_path = Path(args.get("image_path", ""))
-    if not image_path.is_file():
-        raise OperationError(f"no such image: {image_path}")
+    image_path = _require_managed_file(args.get("image_path"), paths.IMAGES_DIR, "image")
 
     seed_path = args.get("seed_path")
-    verify = bool(args.get("verify", True))
+    if seed_path:
+        seed = _require_managed_file(
+            seed_path, paths.DATA_MOUNT / "provisioning", "provisioning seed"
+        )
+        seed_path = str(seed)
+    verify = args.get("verify", True)
+    if not isinstance(verify, bool):
+        raise OperationError("'verify' must be true or false")
 
     yield f"Target : {target_device}"
     yield f"Source : {image_path} ({image_path.stat().st_size} bytes)"
@@ -219,8 +227,6 @@ def provision_apply(args: dict) -> Iterator[str]:
 
     if seed_path:
         seed = Path(seed_path)
-        if not seed.is_file():
-            raise OperationError(f"no such seed file: {seed}")
         yield ""
         yield f"Seeding answer file {seed.name}"
         yield from _run(["partprobe", target_device], check=False)
@@ -248,6 +254,17 @@ def provision_apply(args: dict) -> Iterator[str]:
 
     yield ""
     yield "Provisioning finished."
+
+
+def _require_managed_file(value: object, root: Path, label: str) -> Path:
+    """Accept a real file strictly below a daemon-chosen data directory."""
+    if not isinstance(value, str) or not value:
+        raise OperationError(f"{label} path is required")
+    resolved = Path(value).resolve()
+    resolved_root = root.resolve()
+    if resolved_root not in resolved.parents or not resolved.is_file():
+        raise OperationError(f"no such {label}: {value}")
+    return resolved
 
 
 def _compare_prefix(image_path: Path, device: str, size: int, chunk: int = 4 * 1024 * 1024) -> bool:
@@ -298,7 +315,122 @@ def network_diagnostics(args: dict) -> Iterator[str]:
         yield from _run(argv, check=False)
 
 
+def _capture(argv: list[str]) -> Iterator[str]:
+    """Stream one command while returning its exit code and combined output."""
+    yield f"$ {' '.join(argv)}"
+    proc = subprocess.Popen(
+        argv,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+    callback = getattr(_context, "process_callback", None)
+    if callback:
+        callback(proc)
+    output: list[str] = []
+    try:
+        for line in proc.stdout or ():
+            text = line.rstrip("\n")
+            output.append(text)
+            yield text
+        proc.wait()
+    finally:
+        if callback:
+            callback(None)
+    return proc.returncode, "\n".join(output)
+
+
+def _smart_type_from_scan(device: str, output: str) -> str | None:
+    """Extract smartctl's own safe `-d TYPE` recommendation for one disk."""
+    for line in output.splitlines():
+        try:
+            fields = shlex.split(line.partition("#")[0])
+        except ValueError:
+            continue
+        if len(fields) >= 3 and fields[0] == device and fields[1] == "-d":
+            device_type = fields[2]
+            # The value comes from smartctl, but keep the root boundary strict
+            # even here: it must remain one ordinary argv token.
+            if all(char.isalnum() or char in ",+_-" for char in device_type):
+                return device_type
+    return None
+
+
+def _smart(args: dict, *, selftest: bool) -> Iterator[str]:
+    """Run SMART through direct, USB-SATA and SCSI transports as needed.
+
+    Many USB drive bridges answer smartctl's generic SCSI probe with
+    "Invalid Field in Command" even though ATA SMART passthrough works. Ask
+    smartctl for its detected device type first, then retry the small fixed set
+    of transports supported by common bridges.
+    """
+    device = require_disk(args)
+    test = require_choice(args, "test", {"short", "long"}, default="short") if selftest else None
+
+    yield f"Detecting SMART transport for {device}"
+    _scan_code, scan_output = yield from _capture(["smartctl", "--scan-open"])
+    detected = _smart_type_from_scan(device, scan_output)
+    if detected:
+        yield f"smartctl detected device type: {detected}"
+    else:
+        yield "No device type was reported; trying safe built-in transports."
+
+    candidates: list[str | None] = []
+    for candidate in (detected, None, "sat", "sat,12", "sat,16", "scsi"):
+        if candidate not in candidates:
+            candidates.append(candidate)
+
+    last_code = 1
+    for index, device_type in enumerate(candidates):
+        if selftest:
+            assert test is not None
+            argv = ["smartctl", "-t", test]
+        else:
+            argv = ["smartctl", "-a"]
+        if device_type:
+            argv += ["-d", device_type]
+        argv.append(device)
+
+        if index:
+            yield ""
+            yield f"Retrying with device type: {device_type or 'auto'}"
+        code, _output = yield from _capture(argv)
+        last_code = code
+
+        # smartctl is a bitmask. Bits 0-2 are invocation/transport failures;
+        # bits 3-7 are real disk-health findings and must not be mistaken for
+        # a broken tool invocation.
+        if code >= 0 and (code & 0x07) == 0:
+            if code:
+                yield ""
+                yield f"SMART completed with drive-health warning bits set (exit {code})."
+                yield "Review the attributes, error log and self-test log above."
+            else:
+                yield ""
+                yield "SMART command completed successfully."
+            return
+
+        if index + 1 < len(candidates):
+            yield f"Transport failed (exit {code}); trying another compatible mode."
+
+    raise OperationError(
+        f"SMART could not communicate with {device} (last exit {last_code}). "
+        "The USB enclosure or adapter may not support SMART passthrough."
+    )
+
+
+def smart_scan(args: dict) -> Iterator[str]:
+    yield from _smart(args, selftest=False)
+
+
+def smart_selftest(args: dict) -> Iterator[str]:
+    yield from _smart(args, selftest=True)
+
+
 PROCEDURE_REQUIREMENTS = {
+    "smart_scan": ("smartctl",),
+    "smart_selftest": ("smartctl",),
     "linux_repair": ("mount", "umount", "chroot"),
     "windows_repair": ("mount", "umount", "ntfsfix", "cp"),
     "provision_apply": ("wipefs", "dd", "sync"),
@@ -308,6 +440,8 @@ PROCEDURE_REQUIREMENTS = {
 
 
 PROCEDURES = {
+    "smart_scan": smart_scan,
+    "smart_selftest": smart_selftest,
     "linux_repair": linux_repair,
     "windows_repair": windows_repair,
     "provision_apply": provision_apply,

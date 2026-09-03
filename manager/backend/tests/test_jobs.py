@@ -5,10 +5,18 @@ rather than depending on sh.
 """
 import sys
 import time
+from pathlib import Path
 
 import pytest
 
 from app.daemon import jobs
+
+
+@pytest.fixture(autouse=True)
+def job_log_dir(tmp_path, monkeypatch):
+    target = tmp_path / "logs"
+    monkeypatch.setattr(jobs.paths, "JOB_LOG_DIR", target)
+    return target
 
 
 def wait_for(predicate, timeout=15):
@@ -34,7 +42,7 @@ def python_op(monkeypatch):
     return op
 
 
-def test_successful_job_captures_output(python_op):
+def test_successful_job_captures_output(python_op, job_log_dir):
     job = jobs.start_job("_test_python", {"code": "print('hello from job')"}, "echo test")
     assert wait_for(lambda: job.state != "running")
 
@@ -43,9 +51,14 @@ def test_successful_job_captures_output(python_op):
     assert snapshot["exit_code"] == 0
     assert any("hello from job" in line for line in snapshot["log"])
     assert snapshot["progress"] == 100.0
+    assert snapshot["log_file"].startswith("logs/")
+    saved = job_log_dir / Path(snapshot["log_file"]).name
+    text = saved.read_text(encoding="utf-8")
+    assert "hello from job" in text
+    assert "State: success" in text
 
 
-def test_failing_job_is_marked_failed(python_op):
+def test_failing_job_is_marked_failed(python_op, job_log_dir):
     job = jobs.start_job("_test_python", {"code": "import sys; sys.exit(3)"}, "failing test")
     assert wait_for(lambda: job.state != "running")
 
@@ -53,6 +66,10 @@ def test_failing_job_is_marked_failed(python_op):
     assert snapshot["state"] == "failed"
     assert snapshot["exit_code"] == 3
     assert "3" in (snapshot["error"] or "")
+    saved = job_log_dir / Path(snapshot["log_file"]).name
+    text = saved.read_text(encoding="utf-8")
+    assert "State: failed" in text
+    assert "Exit code: 3" in text
 
 
 def test_stderr_is_captured_too(python_op):
@@ -63,13 +80,15 @@ def test_stderr_is_captured_too(python_op):
     assert any("to stderr" in line for line in job.snapshot()["log"])
 
 
-def test_bad_arguments_fail_before_a_job_is_created():
+def test_bad_arguments_fail_before_a_job_is_created(job_log_dir):
     """Validation happens on the caller's thread so the RPC returns a useful
     error, rather than creating a job that dies immediately."""
     from app.daemon.operations import OperationError
 
     with pytest.raises(OperationError):
         jobs.start_job("smart_scan", {"device": "/etc/passwd"}, "hostile")
+    rejection_log = job_log_dir / "tool-rejections.log"
+    assert "smart_scan" in rejection_log.read_text(encoding="utf-8")
 
 
 def test_unknown_kind_is_rejected():
@@ -122,8 +141,22 @@ def test_log_is_capped(python_op):
     assert wait_for(lambda: job.state != "running", timeout=30)
 
     snapshot = job.snapshot()
-    assert snapshot["log_total"] <= jobs.LOG_LIMIT + 1
-    assert any("truncated" in line for line in snapshot["log"])
+    assert snapshot["log_total"] > jobs.LOG_LIMIT
+    assert len(snapshot["log"]) <= jobs.LOG_LIMIT + 1
+
+
+def test_log_offset_remains_monotonic_after_memory_cap(python_op):
+    job = jobs.start_job(
+        "_test_python",
+        {"code": f"[print(i) for i in range({jobs.LOG_LIMIT + 50})]"},
+        "stream cap test",
+    )
+    assert wait_for(lambda: job.state != "running", timeout=30)
+
+    snapshot = job.snapshot(log_offset=0)
+    assert snapshot["log_total"] > jobs.LOG_LIMIT
+    assert "earlier output" in snapshot["log"][0]
+    assert job.snapshot(log_offset=snapshot["log_total"])["log"] == []
 
 
 def test_listing_excludes_log_bodies(python_op):
@@ -135,3 +168,17 @@ def test_listing_excludes_log_bodies(python_op):
 
 def test_get_job_returns_none_for_unknown_id():
     assert jobs.get_job(999_999) is None
+
+
+def test_unwritable_log_location_does_not_stop_the_tool(python_op, tmp_path, monkeypatch):
+    not_a_directory = tmp_path / "not-a-directory"
+    not_a_directory.write_text("occupied", encoding="utf-8")
+    monkeypatch.setattr(jobs.paths, "JOB_LOG_DIR", not_a_directory)
+
+    job = jobs.start_job("_test_python", {"code": "print('still runs')"}, "log failure")
+    assert wait_for(lambda: job.state != "running")
+
+    snapshot = job.snapshot()
+    assert snapshot["state"] == "success"
+    assert snapshot["log_file"] is None
+    assert "could not save" in snapshot["log_error"]

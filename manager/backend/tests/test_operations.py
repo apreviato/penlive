@@ -122,12 +122,6 @@ def test_rejects_unsafe_names(name):
 
 # ---- argv construction -----------------------------------------------------
 
-def test_smart_scan_builds_expected_argv(fake_device, tools_present):
-    argv, op = operations.build_argv("smart_scan", {"device": "/dev/sda"})
-    assert argv == ["smartctl", "-a", "/dev/sda"]
-    assert op.destructive is False
-
-
 def test_fsck_check_is_read_only(fake_device, tools_present):
     """The check variant must never be able to modify a filesystem."""
     argv, _ = operations.build_argv("fsck_check", {"device": "/dev/sda1", "fstype": "ext"})
@@ -183,3 +177,14 @@ def test_backup_never_overwrites_an_existing_image(fake_device, tools_present, t
         operations.build_argv(
             "backup_partition", {"device": "/dev/sda1", "name": "important", "fstype": "ext"}
         )
+
+
+def test_photorec_everything_enters_file_options_first(fake_device, tools_present, tmp_path, monkeypatch):
+    monkeypatch.setattr(operations, "recovery_dir", lambda: tmp_path)
+
+    argv, _ = operations.build_argv(
+        "photorec_scan",
+        {"device": "/dev/sda1", "name": "rescue", "filetype": "everything"},
+    )
+
+    assert argv[-1] == "fileopt,everything,enable,search"

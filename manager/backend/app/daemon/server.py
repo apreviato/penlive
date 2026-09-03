@@ -12,6 +12,7 @@ import asyncio
 import errno
 import logging
 import os
+import secrets
 import shutil
 import subprocess
 import sys
@@ -30,6 +31,13 @@ DRIVE_MOUNTS = Path(os.environ.get("PENLIVE_DRIVE_MOUNTS", "/run/penlive/drives"
 # ntfs-3g on an encrypted or unclean volume can sit for minutes, and the daemon
 # handles one request at a time, so an unbounded mount blocks everything else.
 MOUNT_TIMEOUT_SECONDS = 60
+
+# device -> unguessable lease. A release request must prove it owns the grant,
+# so another API call cannot revoke access from a running installer VM.
+_VM_DISK_GRANTS: dict[str, str] = {}
+_VM_DISK_RELEASED: dict[str, str] = {}
+_PENLIVE_LABELS = {"PENEFI", "PENSYS", "PENDATA", "persistence"}
+_CRITICAL_MOUNTS = {"/", "/boot", "/data", "/run/live/medium"}
 
 
 def _builder_safety():
@@ -177,6 +185,140 @@ async def handle_umount_device(args: dict) -> dict:
     subprocess.run(["umount", str(mountpoint)], check=True)
     mountpoint.rmdir()
     return {"device": device}
+
+
+def _vm_disk_nodes(device: str) -> list[dict]:
+    """Return the selected disk and descendants as reported by the kernel."""
+    import json
+
+    proc = subprocess.run(
+        ["lsblk", "-J", "-p", "-o", "PATH,TYPE,LABEL,MOUNTPOINTS,RO", device],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(proc.stderr.strip() or f"could not inspect {device}")
+    try:
+        roots = json.loads(proc.stdout).get("blockdevices", [])
+    except (ValueError, AttributeError) as exc:
+        raise RuntimeError(f"could not understand the device layout for {device}") from exc
+    if len(roots) != 1 or roots[0].get("path") != device:
+        raise RuntimeError(f"could not confirm that {device} is one whole disk")
+
+    nodes: list[dict] = []
+
+    def walk(node: dict) -> None:
+        nodes.append(node)
+        for child in node.get("children") or []:
+            walk(child)
+
+    walk(roots[0])
+    return nodes
+
+
+def _node_mounts(node: dict) -> list[str]:
+    value = node.get("mountpoints")
+    if isinstance(value, list):
+        return [str(item) for item in value if item]
+    if value:
+        return [str(value)]
+    return []
+
+
+async def handle_prepare_vm_disk(args: dict) -> dict:
+    """Unmount and grant QEMU temporary write access to one confirmed disk."""
+    from .operations import require_disk
+
+    device = require_disk(args)
+    if args.get("confirmation") != device:
+        raise ValueError("confirmation does not match the selected disk")
+    if device in _VM_DISK_GRANTS:
+        raise RuntimeError(f"{device} is already attached to a virtual machine")
+    _VM_DISK_RELEASED.pop(device, None)
+
+    nodes = _vm_disk_nodes(device)
+    if any((node.get("label") or "") in _PENLIVE_LABELS for node in nodes):
+        raise RuntimeError("the PenLive USB drive can never be attached as an install target")
+    if any(bool(node.get("ro")) for node in nodes):
+        raise RuntimeError(f"{device} is read-only")
+
+    active_layers = sorted({
+        str(node.get("type")) for node in nodes
+        if node.get("type") not in {"disk", "part"}
+    })
+    if active_layers:
+        raise RuntimeError(
+            f"{device} has active storage layers ({', '.join(active_layers)}); "
+            "close encrypted, RAID, or LVM volumes before attaching it"
+        )
+
+    mounts = sorted(
+        {mount for node in nodes for mount in _node_mounts(node)},
+        key=lambda value: (value.count("/"), len(value)),
+        reverse=True,
+    )
+    critical = sorted(set(mounts) & _CRITICAL_MOUNTS)
+    if critical:
+        raise RuntimeError(
+            f"refusing to detach a disk used by PenLive ({', '.join(critical)})"
+        )
+
+    node_paths = {str(node.get("path")) for node in nodes if node.get("path")}
+    try:
+        swaps = Path("/proc/swaps").read_text(encoding="utf-8", errors="replace").splitlines()[1:]
+    except OSError:
+        swaps = []
+    active_swaps = [line.split()[0] for line in swaps if line.split() and line.split()[0] in node_paths]
+    if active_swaps:
+        raise RuntimeError(
+            f"{device} contains active swap ({', '.join(active_swaps)}); disable it before attaching the disk"
+        )
+
+    for mountpoint in mounts:
+        proc = subprocess.run(
+            ["umount", "--", mountpoint], capture_output=True, text=True, timeout=30
+        )
+        if proc.returncode != 0:
+            raise RuntimeError(
+                proc.stderr.strip() or f"could not unmount {mountpoint} before starting the VM"
+            )
+
+    if not shutil.which("setfacl"):
+        raise RuntimeError("setfacl is not installed; rebuild PenLive with the acl package")
+    proc = subprocess.run(
+        ["setfacl", "-m", "u:penlive:rw", device], capture_output=True, text=True, timeout=30
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(proc.stderr.strip() or f"could not grant VM access to {device}")
+
+    lease = secrets.token_urlsafe(32)
+    _VM_DISK_GRANTS[device] = lease
+    subprocess.run(["blockdev", "--flushbufs", device], capture_output=True, timeout=30)
+    return {"device": device, "lease": lease, "unmounted": mounts}
+
+
+async def handle_release_vm_disk(args: dict) -> dict:
+    """Remove a VM disk ACL, but only for the holder of its lease."""
+    from .operations import require_disk
+
+    device = require_disk(args)
+    lease = args.get("lease")
+    if isinstance(lease, str) and _VM_DISK_RELEASED.get(device) == lease:
+        return {"device": device, "released": True, "already_released": True}
+    if not isinstance(lease, str) or _VM_DISK_GRANTS.get(device) != lease:
+        raise ValueError("invalid or expired VM disk lease")
+
+    proc = subprocess.run(
+        ["setfacl", "-x", "u:penlive", device], capture_output=True, text=True, timeout=30
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(proc.stderr.strip() or f"could not revoke VM access to {device}")
+    _VM_DISK_GRANTS.pop(device, None)
+    _VM_DISK_RELEASED[device] = lease
+    subprocess.run(["blockdev", "--flushbufs", device], capture_output=True, timeout=30)
+    subprocess.run(["partprobe", device], capture_output=True, timeout=30)
+    return {"device": device, "released": True}
 
 
 async def handle_write_nextboot(args: dict) -> dict:
@@ -504,7 +646,7 @@ async def handle_write_usb(args: dict) -> dict:
     CommandRunner, assert_target_is_safe = _builder_safety()
     assert_target_is_safe(target_device, allow_system_disk=False)
 
-    runner = CommandRunner(dry_run=False, log_path=paths.LOG_DIR / "write_usb.log")
+    runner = CommandRunner(dry_run=False, log_path=paths.JOB_LOG_DIR / "write_usb.log")
     runner.run(["wipefs", "-a", target_device])
     runner.run(["dd", f"if={image_path}", f"of={target_device}", "bs=4M", "conv=fsync", "status=progress"])
     return {"written": True}
@@ -891,6 +1033,8 @@ HANDLERS = {
     "poweroff": handle_poweroff,
     "kexec_boot": handle_kexec_boot,
     "write_usb": handle_write_usb,
+    "prepare_vm_disk": handle_prepare_vm_disk,
+    "release_vm_disk": handle_release_vm_disk,
     "job_start": handle_job_start,
     "job_status": handle_job_status,
     "job_list": handle_job_list,

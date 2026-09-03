@@ -151,3 +151,52 @@ async def test_client_rejects_unknown_command_before_connecting():
     from app.daemon import client
     with pytest.raises(ValueError, match="unknown daemon command"):
         await client.call("rm_rf_everything")
+
+
+@pytest.mark.asyncio
+async def test_vm_disk_grant_unmounts_then_adds_and_removes_only_scoped_acl(monkeypatch):
+    import subprocess
+    from app.daemon import operations, server
+
+    device = "/dev/nvme9n1"
+    calls = []
+    monkeypatch.setattr(operations, "require_disk", lambda args: args["device"])
+    monkeypatch.setattr(server, "_vm_disk_nodes", lambda selected: [
+        {"path": selected, "type": "disk", "label": None, "mountpoints": [None], "ro": 0},
+        {"path": f"{selected}p1", "type": "part", "label": None, "mountpoints": ["/mnt/local"], "ro": 0},
+    ])
+    monkeypatch.setattr(server.shutil, "which", lambda name: "/usr/bin/setfacl")
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(server.subprocess, "run", fake_run)
+    server._VM_DISK_GRANTS.clear()
+    server._VM_DISK_RELEASED.clear()
+
+    grant = await server.handle_prepare_vm_disk({"device": device, "confirmation": device})
+    assert ["umount", "--", "/mnt/local"] in calls
+    assert ["setfacl", "-m", "u:penlive:rw", device] in calls
+
+    await server.handle_release_vm_disk({"device": device, "lease": grant["lease"]})
+    duplicate = await server.handle_release_vm_disk({"device": device, "lease": grant["lease"]})
+    assert ["setfacl", "-x", "u:penlive", device] in calls
+    assert device not in server._VM_DISK_GRANTS
+    assert duplicate["already_released"] is True
+
+
+@pytest.mark.asyncio
+async def test_vm_disk_grant_refuses_penlive_itself(monkeypatch):
+    from app.daemon import operations, server
+
+    device = "/dev/sdz"
+    monkeypatch.setattr(operations, "require_disk", lambda args: args["device"])
+    monkeypatch.setattr(server, "_vm_disk_nodes", lambda selected: [
+        {"path": selected, "type": "disk", "label": None, "mountpoints": [], "ro": 0},
+        {"path": f"{selected}1", "type": "part", "label": "PENSYS", "mountpoints": ["/boot"], "ro": 0},
+    ])
+    server._VM_DISK_GRANTS.clear()
+
+    with pytest.raises(RuntimeError, match="PenLive USB drive"):
+        await server.handle_prepare_vm_disk({"device": device, "confirmation": device})

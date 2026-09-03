@@ -48,7 +48,7 @@ directly:
 |---|---|---|---|
 | Backup Partition | Backup | safe | `partclone.<fs>`, or `dd` for unknown filesystems |
 | Restore Partition | Backup | **destructive** | `partclone.restore` / `dd` |
-| Drive Health (SMART) | Diagnostics | safe | `smartctl -a`, `smartctl -t` |
+| Drive Health (SMART) | Diagnostics | safe | `smartctl --scan-open`, adaptive `smartctl -d ... -a/-t` |
 | Filesystem Check & Repair | Repair | caution | `e2fsck` / `ntfsfix` / `fsck.vfat` / `fsck.exfat` |
 | Linux Boot Repair | Repair | caution | chroot + `grub-install`, `update-initramfs` |
 | Windows Repair | Repair | caution | `ntfsfix`, restore of Windows EFI boot files |
@@ -89,9 +89,18 @@ Privileged work runs as a job in the daemon, not in the request:
 - `WS /api/jobs/<id>/stream` → snapshots roughly once a second
 - `POST /api/jobs/<id>/cancel` → terminates the active command, then kills after 5s
 
-Job logs are capped at 2000 lines, keeping the head and the most recent tail. A
-PhotoRec pass over a large disk emits hundreds of thousands of lines, and the
-daemon runs on a machine booted from a USB stick.
+The live UI keeps the most recent 2000 lines in memory. Every job is also
+written to `logs/<timestamp>-<job>-<kind>.log` on PENDATA, visible from the
+Files tab and preserved across reboots. Persistent logs are capped at 10 MiB
+per job so a verbose PhotoRec pass cannot fill the stick; completion state and
+errors are still appended after the cap.
+
+SMART is transport-aware. It first reads the device type reported by
+`smartctl --scan-open`, then falls back through automatic, SAT and SCSI modes.
+This handles USB-to-SATA bridges that reject the generic probe with “Invalid
+Field in Command”. Only smartctl exit bits 0–2 mean the invocation failed;
+health-warning bits remain a completed diagnostic and are called out in its
+log.
 
 ## Adding a tool
 

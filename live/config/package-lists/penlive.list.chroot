@@ -86,6 +86,7 @@ cryptsetup
 qemu-system-x86
 qemu-utils
 ovmf
+acl
 
 # --- diagnostics / recovery ---
 smartmontools

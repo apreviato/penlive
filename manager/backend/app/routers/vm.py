@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 
 from .. import repo
-from ..schemas import VmRequest
+from ..schemas import VmDiskRequest, VmRequest
 from ..services import vm as vm_service
 
 router = APIRouter(prefix="/api/vm", tags=["vm"])
@@ -31,6 +31,20 @@ async def stop_vm(image_id: str):
     except vm_service.VmError as exc:
         raise HTTPException(400, str(exc))
     return {"stopped": image_id}
+
+
+@router.post("/{image_id}/physical-disk")
+async def attach_physical_disk(image_id: str, body: VmDiskRequest):
+    image = repo.get_image(image_id)
+    if not image or not image.get("path"):
+        raise HTTPException(404, "image not downloaded")
+    try:
+        session = await vm_service.attach_physical_disk(
+            image_id, body.device, body.confirmation
+        )
+    except vm_service.VmError as exc:
+        raise HTTPException(400, str(exc))
+    return {**session, "kvm": vm_service.kvm_available()}
 
 
 @router.get("/{image_id}/status")

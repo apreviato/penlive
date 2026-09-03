@@ -360,6 +360,23 @@ QEMU runs as `penlive` and exposes VNC plus its WebSocket transport only on
 loopback. noVNC is bundled into the frontend, so **Run VM** changes to the VM
 tab instead of opening a GTK window behind fullscreen Chromium. The kiosk can
 therefore display and control the guest without Alt+Tab or another desktop.
+By default the VM receives the selected ISO only as a read-only CD-ROM: no
+physical disk and no persistent virtual hard disk is attached, so an installer
+cannot alter the notebook and live-session changes disappear when the VM
+stops. An explicit **Enable drive access** flow is available for installation:
+it lists whole disks, hides PenLive and read-only devices, requires the exact
+device path to be typed back, and restarts QEMU with only that disk attached.
+The root daemon independently revalidates the device, refuses PenLive labels,
+active swap/storage layers and system mount points, safely unmounts ordinary
+partitions, and grants the `penlive` user a lease-bound ACL. The ACL is removed
+when QEMU stops or exits. On a UEFI-booted host this mode uses a private OVMF
+variable store and a q35/SATA guest, with the installer CD first for one boot.
+The notebook's real UEFI NVRAM is never shared, so the user may still need F12
+to select the installed drive after installation.
+
+The VM tab can expand over the whole kiosk; `Ctrl+Alt+F` or the toolbar
+revealed at the top returns to the normal interface without restarting the
+guest.
 
 ## Runtime storage ownership
 

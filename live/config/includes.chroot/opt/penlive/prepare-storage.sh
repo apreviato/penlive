@@ -28,7 +28,7 @@ if mountpoint -q /boot; then
 fi
 
 if mountpoint -q /data; then
-    for path in /data/images /data/images/.downloads /data/backups /data/recovered /data/catalog; do
+    for path in /data/images /data/images/.downloads /data/backups /data/recovered /data/catalog /data/logs; do
         mkdir -p "$path"
         chown -R penlive:penlive "$path"
     done

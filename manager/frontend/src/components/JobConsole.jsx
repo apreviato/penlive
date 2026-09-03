@@ -72,6 +72,7 @@ export default function JobConsole({ jobId, onClose }) {
               {job?.exit_code !== null && job?.exit_code !== undefined && !running && (
                 <span> · exit {job.exit_code}</span>
               )}
+              {job?.log_file && <span> · saved to {job.log_file}</span>}
             </div>
           </div>
           <button className="btn btn-sm" onClick={onClose} disabled={running}>
@@ -86,6 +87,7 @@ export default function JobConsole({ jobId, onClose }) {
         )}
 
         {job?.error && <div className="banner banner-error">{job.error}</div>}
+        {job?.log_error && <div className="banner banner-warning">{job.log_error}</div>}
 
         <pre className="console" ref={logRef} onScroll={onScroll}>
           {lines.length === 0 ? 'Waiting for output…' : lines.join('\n')}

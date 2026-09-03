@@ -26,6 +26,11 @@ ALLOWED_COMMANDS = {
     "poweroff",
     "kexec_boot",
     "write_usb",
+    # A narrowly-scoped, temporary ACL lets the unprivileged QEMU process open
+    # exactly one user-confirmed whole disk. The daemon removes it when the VM
+    # stops; no generic chmod/chown surface is exposed.
+    "prepare_vm_disk",
+    "release_vm_disk",
     # Tools/plugins. `job_start` takes an operation *name* plus structured
     # arguments — never a command line. What each name may execute is fixed by
     # daemon/operations.py and daemon/procedures.py.

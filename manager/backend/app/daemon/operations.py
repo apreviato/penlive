@@ -133,19 +133,6 @@ class Operation:
         return [b for b in self.requires if not shutil.which(b)]
 
 
-# --------------------------------------------------------------------------
-# diagnostics
-# --------------------------------------------------------------------------
-
-def _smart_scan(args: dict) -> list[str]:
-    return ["smartctl", "-a", require_disk(args)]
-
-
-def _smart_selftest(args: dict) -> list[str]:
-    kind = require_choice(args, "test", {"short", "long"}, default="short")
-    return ["smartctl", "-t", kind, require_disk(args)]
-
-
 def _fsck_check(args: dict) -> list[str]:
     """Read-only check. `-n` answers 'no' to every repair prompt."""
     device = require_unmounted(require_partition(args))
@@ -250,7 +237,11 @@ def _photorec_scan(args: dict) -> list[str]:
     filetype = require_choice(
         args, "filetype", {"everything", "jpg", "pdf", "doc", "zip", "mp4"}, default="everything"
     )
-    options = "everything,enable" if filetype == "everything" else f"fileopt,everything,disable,{filetype},enable"
+    options = (
+        "fileopt,everything,enable"
+        if filetype == "everything"
+        else f"fileopt,everything,disable,{filetype},enable"
+    )
     return ["photorec", "/d", str(dest / "recup"), "/cmd", device, f"{options},search"]
 
 
@@ -290,8 +281,6 @@ OPERATIONS: dict[str, Operation] = {
     op.name: op
     for op in [
         Operation("list_block_devices", _list_block_devices, "List block devices", requires=("lsblk",)),
-        Operation("smart_scan", _smart_scan, "Read SMART attributes", requires=("smartctl",)),
-        Operation("smart_selftest", _smart_selftest, "Start a SMART self-test", requires=("smartctl",)),
         Operation("fsck_check", _fsck_check, "Check a filesystem read-only"),
         Operation("fsck_repair", _fsck_repair, "Repair a filesystem", destructive=True),
         Operation("backup_partition", _backup_partition, "Image a partition (used blocks only)",

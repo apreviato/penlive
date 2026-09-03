@@ -201,7 +201,9 @@ export default function App() {
       {tab === 'files' && <FileManager onNotice={setNotice} target={fileTarget} />}
       {tab === 'tools' && <Tools />}
       {tab === 'terminal' && <Terminal />}
-      {tab === 'vm' && <VmViewer session={vmSession} onClosed={closeVm} />}
+      {tab === 'vm' && (
+        <VmViewer session={vmSession} onSessionChanged={setVmSession} onClosed={closeVm} />
+      )}
       {tab === 'settings' && (
         <SettingsPanel
           sysinfo={sysinfo}
