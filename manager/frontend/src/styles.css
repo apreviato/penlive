@@ -548,6 +548,10 @@ textarea,
   color: var(--danger);
 }
 
+.warning-text {
+  color: var(--warning);
+}
+
 /* ---------- forms ---------- */
 
 .form-row {

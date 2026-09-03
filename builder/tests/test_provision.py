@@ -14,7 +14,11 @@ def _inputs(tmp_path: Path) -> ProvisionInputs:
     grub_cfg.write_text("# grub")
     recovery_cfg = tmp_path / "recovery.cfg"
     recovery_cfg.write_text("# recovery")
-    return ProvisionInputs(live_dir=live, grub_cfg=grub_cfg, recovery_cfg=recovery_cfg)
+    wimboot = tmp_path / "wimboot"
+    wimboot.write_bytes(b"MZ")
+    return ProvisionInputs(
+        live_dir=live, grub_cfg=grub_cfg, recovery_cfg=recovery_cfg, wimboot=wimboot
+    )
 
 
 def test_dry_run_reports_no_problems(tmp_path):

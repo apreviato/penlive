@@ -49,7 +49,14 @@ class WindowsAdapter(BootAdapter):
     family = "windows"
 
     def detect(self, iso: IsoImage) -> int:
-        if iso.exists("/sources/boot.wim") and iso.exists("/sources/install.wim"):
+        installer_payload = any(
+            iso.exists(path) for path in (
+                "/sources/install.wim",
+                "/sources/install.esd",
+                "/sources/install.swm",
+            )
+        )
+        if iso.exists("/sources/boot.wim") and installer_payload:
             return 90
         return 0
 
@@ -57,7 +64,8 @@ class WindowsAdapter(BootAdapter):
         if not WIMBOOT_BIN.is_file():
             raise WimbootMissing(
                 f"{WIMBOOT_BIN} is missing: this stick was built without wimboot, so Windows "
-                f"media can only be mounted or run in the VM. Rebuild with --wimboot."
+                "media can only be mounted or run in the VM. Rebuild the stick with the current "
+                "PenLive builder, which installs wimboot automatically."
             )
 
         extract_dir.mkdir(parents=True, exist_ok=True)

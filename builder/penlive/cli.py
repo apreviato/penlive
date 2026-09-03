@@ -18,7 +18,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from . import disk, grubinstall
+from . import disk, grubinstall, wimboot
 from .image import attached_loop_device, compress_image, create_sparse_image
 from .mount import mounted
 from .provision import ProvisionInputs, provision
@@ -76,12 +76,16 @@ def _build_layout(args: argparse.Namespace) -> disk.DiskLayout:
 
 
 def _provision_inputs(args: argparse.Namespace) -> ProvisionInputs:
+    loader = wimboot.obtain(
+        Path(args.wimboot) if args.wimboot else None,
+        dry_run=args.dry_run,
+    )
     return ProvisionInputs(
         live_dir=Path(args.live_dir),
         grub_cfg=Path(args.grub_cfg),
         recovery_cfg=Path(args.recovery_cfg),
         catalog_seed=Path(args.catalog) if args.catalog else None,
-        wimboot=Path(args.wimboot) if args.wimboot else None,
+        wimboot=loader,
     )
 
 
@@ -102,6 +106,14 @@ def cmd_install(args: argparse.Namespace) -> int:
     except ValueError as exc:
         # A size mismatch is an operator mistake, not a crash; a traceback here
         # buries the one line that says which number to change.
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    # Authenticate the Windows loader before asking for erase confirmation or
+    # changing the target disk. A network failure must leave the USB untouched.
+    try:
+        inputs = _provision_inputs(args)
+    except wimboot.WimbootUnavailable as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
@@ -126,7 +138,7 @@ def cmd_install(args: argparse.Namespace) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 
-    problems = provision(runner, device, layout, _provision_inputs(args), Path(args.mount_root))
+    problems = provision(runner, device, layout, inputs, Path(args.mount_root))
     if problems:
         print("VALIDATION FAILED:", file=sys.stderr)
         for p in problems:
@@ -153,6 +165,12 @@ def cmd_image(args: argparse.Namespace) -> int:
         )
         return 1
 
+    try:
+        inputs = _provision_inputs(args)
+    except wimboot.WimbootUnavailable as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
     image_path = Path(args.output)
     runner = CommandRunner(dry_run=args.dry_run, log_path=Path(args.log) if args.log else None)
     create_sparse_image(runner, image_path, args.size_mib)
@@ -164,7 +182,7 @@ def cmd_image(args: argparse.Namespace) -> int:
             runner, loop_dev, layout,
             assume_yes=True, allow_system_disk=True, allow_loop=True,
         )
-        problems = provision(runner, loop_dev, layout, _provision_inputs(args), Path(args.mount_root))
+        problems = provision(runner, loop_dev, layout, inputs, Path(args.mount_root))
 
     if problems:
         print("VALIDATION FAILED:", file=sys.stderr)
@@ -217,7 +235,7 @@ def _add_provision_args(p: argparse.ArgumentParser) -> None:
     p.add_argument(
         "--wimboot",
         default=None,
-        help="path to the iPXE wimboot binary; without it Windows images can only be mounted or run in the VM",
+        help="use this audited iPXE wimboot binary instead of the automatically downloaded pinned release",
     )
     p.add_argument("--mount-root", default=str(DEFAULT_MOUNT_ROOT))
     p.add_argument("--log", default=None, help="append a command audit log to this path")

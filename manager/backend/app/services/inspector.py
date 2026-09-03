@@ -58,7 +58,8 @@ def process_downloaded_image(image_id: str, iso_path: Path) -> None:
         if not WIMBOOT_BIN.is_file():
             message = (
                 f"{WIMBOOT_BIN} is missing: this stick was built without wimboot, so Windows "
-                "media can only be mounted or run in the VM."
+                "media can only be mounted or run in the VM. Rebuild the stick with the current "
+                "PenLive builder, which installs wimboot automatically."
             )
             log.warning("%s", message)
             _mount_only(image_id, message)

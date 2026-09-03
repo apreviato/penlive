@@ -158,10 +158,10 @@ loop device — so `WindowsAdapter` uses [wimboot](https://ipxe.org/wimboot)
 
 Three pieces have to line up, and only one of them is the adapter:
 
-1. **`wimboot` on PENSYS.** Debian does not package it, so the builder takes a
-   path: `penlive image --wimboot ./wimboot`. Without it the adapter raises
-   `WimbootMissing` and the image stays mount-and-VM-only rather than offering
-   a Boot button that cannot work. See [BUILD.md](BUILD.md).
+1. **`wimboot` on PENSYS.** Debian does not package it, so the builder downloads
+   a pinned release and verifies its SHA-256 before touching the target disk.
+   `--wimboot PATH` remains available for offline or independently audited
+   builds. See [BUILD.md](BUILD.md).
 2. **The four boot files**, extracted into the per-image cache like any other
    adapter's kernel. The BCD comes from `/efi/microsoft/boot/bcd`; the one at
    `/boot/bcd` next to it is the BIOS variant and boots UEFI into recovery.

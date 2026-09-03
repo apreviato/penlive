@@ -235,6 +235,12 @@ export default function ImageCard({
             Could not inspect this ISO — {image.inspection_error || 'the file may be incomplete or invalid'}.
           </div>
         )}
+
+        {downloaded && caps.nativeBoot === false && image.inspection_error && (
+          <div className="progress-meta warning-text">
+            Boot unavailable — {image.inspection_error}
+          </div>
+        )}
       </div>
 
       <div className="image-actions">

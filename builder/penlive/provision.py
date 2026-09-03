@@ -18,9 +18,9 @@ class ProvisionInputs:
     live_dir: Path  # contains vmlinuz, initrd.img, filesystem.squashfs
     grub_cfg: Path
     recovery_cfg: Path
+    # The verified iPXE loader used for Windows installation media.
+    wimboot: Path
     catalog_seed: Path | None = None
-    # The iPXE wimboot loader. Absent, Windows images stay mount-and-VM-only.
-    wimboot: Path | None = None
 
 
 def provision(

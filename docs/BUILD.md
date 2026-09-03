@@ -141,21 +141,16 @@ frontend's `dist/` into the chroot, and the `0200-install-manager` hook creates
 the venv with dependencies already resolved — the live system has to work with
 no network.
 
-## 2b. wimboot, for Windows images (optional)
+## 2b. Windows boot support
 
-Booting Windows installation media needs the wimboot loader on PENSYS. Debian
-does not package it, so fetch the release binary once and hand the path to the
-provisioning command:
+Booting Windows installation media needs the iPXE `wimboot` loader on PENSYS.
+The builder downloads the pinned release automatically, verifies its size and
+SHA-256, and caches it before modifying the target disk. A failed download or
+integrity check aborts safely before the USB is erased.
 
-```bash
-curl -LO https://github.com/ipxe/wimboot/releases/latest/download/wimboot
-```
-
-Then add `--wimboot ./wimboot` to the `install` or `image` command below.
-
-Leaving it out is fine and changes nothing else: Windows entries in the catalog
-still download, verify, mount and run in the VM, they just do not offer Boot.
-`penlive validate` does not require the file either.
+For an offline or independently audited build, pass `--wimboot PATH` to use a
+local binary instead. `penlive validate` requires the loader, so a completed
+stick cannot silently ship without Windows boot support.
 
 ## 3a. Writing straight to a stick
 

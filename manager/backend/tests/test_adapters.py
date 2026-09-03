@@ -218,6 +218,21 @@ def test_windows_media_needs_wimboot_on_pensys(tmp_path, monkeypatch):
         prepare_boot(iso_path, tmp_path / "ex", "images/windows.iso")
 
 
+@pytest.mark.parametrize("payload", ["/sources/install.esd", "/sources/install.swm"])
+def test_windows_media_accepts_alternate_installer_payloads(tmp_path, payload):
+    from isofactory import WINDOWS_UDF_FILES
+
+    files = {
+        path: data
+        for path, data in WINDOWS_UDF_FILES.items()
+        if path != "/sources/install.wim"
+    }
+    files[payload] = b"alternate installer payload"
+    iso_path = build_windows_iso(tmp_path / f"windows-{payload.rsplit('.', 1)[-1]}.iso", files)
+
+    assert detect_adapter(iso_path).family == "windows"
+
+
 def test_prepare_windows_collects_the_four_wimboot_files(tmp_path, monkeypatch):
     wimboot = tmp_path / "pensys" / "wimboot"
     wimboot.parent.mkdir()

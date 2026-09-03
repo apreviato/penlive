@@ -10,6 +10,7 @@ REQUIRED_PENSYS_FILES = (
     "grub/grub.cfg",
     "grub/recovery.cfg",
     "grub/grubenv",
+    "wimboot",
 )
 REQUIRED_EFI_FILES = ("EFI/BOOT/BOOTX64.EFI",)
 # Present only on a signed (Secure Boot capable) build; their absence is not a

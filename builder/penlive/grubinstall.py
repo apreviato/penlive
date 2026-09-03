@@ -180,7 +180,7 @@ def install_bootsys_files(
     *,
     grub_cfg: Path,
     recovery_cfg: Path,
-    wimboot: Path | None = None,
+    wimboot: Path,
 ) -> None:
     grub_dir = bootsys_mount / "grub"
     state_dir = bootsys_mount / "state"
@@ -192,12 +192,7 @@ def install_bootsys_files(
     runner.run(["install", "-m", "0644", str(recovery_cfg), str(grub_dir / "recovery.cfg")])
     install_grub_modules(runner, grub_dir)
 
-    # Optional: without it the stick is exactly as it was before, except that
-    # Windows images stay mount-and-VM-only. Debian packages no wimboot, so it
-    # cannot simply be pulled in with the rest of the live system — see
-    # docs/BUILD.md for where to get it.
-    if wimboot is not None:
-        runner.run(["install", "-m", "0644", str(wimboot), str(bootsys_mount / "wimboot")])
+    runner.run(["install", "-m", "0644", str(wimboot), str(bootsys_mount / "wimboot")])
 
     # GRUB's conventional $prefix/grubenv, which grub.cfg pins to ($root)/grub.
     # It holds one variable: next_entry, the one-shot that says "this boot, and
