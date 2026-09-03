@@ -32,7 +32,11 @@ async def lifespan(app: FastAPI):
     await downloader.resume_watchers()
     # live-boot restores /etc from persistence, but the X session starts fresh,
     # so the saved layout has to be re-applied on every boot.
-    await keyboard.apply_saved_layout()
+    # Applying a saved layout goes through the single-request privileged
+    # daemon. NetworkManager or another hardware command can already be using
+    # it during boot, so this must not hold the API port (and the kiosk splash)
+    # hostage. The helper degrades safely if the daemon is not ready yet.
+    asyncio.create_task(keyboard.apply_saved_layout())
     asyncio.create_task(_seed_catalog_and_scan_images())
     yield
     # Release aria2's shared connection pool; the transfers themselves belong to

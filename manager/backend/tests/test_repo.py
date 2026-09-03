@@ -53,6 +53,19 @@ def test_download_lifecycle(temp_db):
     assert repo.get_download(did)["state"] == "complete"
 
 
+def test_late_progress_cannot_reopen_a_cancelled_download(temp_db):
+    """A cancelled watcher may finish an already-started worker-thread write late."""
+    repo.upsert_image_from_catalog(CATALOG_ENTRY)
+    did = repo.create_download("debian-13-live-standard", "gid123", 100)
+    repo.finish_download(did, state="cancelled")
+
+    repo.update_download_progress(
+        did, progress_bytes=80, speed_bps=0, state="queued"
+    )
+
+    assert repo.get_download(did)["state"] == "cancelled"
+
+
 def test_find_download_by_gid(temp_db):
     repo.upsert_image_from_catalog(CATALOG_ENTRY)
     did = repo.create_download("debian-13-live-standard", "gid-abc", 100)

@@ -2,6 +2,7 @@
 Description=Prepare writable PenLive storage directories
 After=local-fs.target penlive-expand.service
 Before=penlive-daemon.service penlive-aria2.service penlive-api.service
+RequiresMountsFor=/boot /data
 
 [Service]
 Type=oneshot

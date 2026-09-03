@@ -7,6 +7,7 @@ failure after it had in fact been scheduled.
 """
 import hashlib
 import threading
+from pathlib import Path
 
 import pytest
 
@@ -236,6 +237,99 @@ async def test_write_nextboot_reports_a_read_only_pensys(tmp_path, monkeypatch):
         await server.handle_write_nextboot({"cfg_text": "x", "json_text": "{}"})
 
 
+@pytest.mark.asyncio
+async def test_write_nextboot_durably_arms_grub_one_shot(tmp_path, monkeypatch):
+    import subprocess
+
+    from app.daemon import server
+
+    state = tmp_path / "state"
+    state.mkdir()
+    bootenv = state / "bootenv"
+    bootenv.write_bytes(b"# GRUB Environment Block\n")
+    monkeypatch.setattr(paths, "STATE_DIR", state)
+    monkeypatch.setattr(paths, "NEXTBOOT_CFG", state / "nextboot.cfg")
+    monkeypatch.setattr(paths, "NEXTBOOT_JSON", state / "nextboot.json")
+    monkeypatch.setattr(paths, "BOOTENV", bootenv)
+    calls = []
+
+    def run(argv, **_kwargs):
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(server.subprocess, "run", run)
+
+    result = await server.handle_write_nextboot({
+        "cfg_text": "menuentry test {}\n",
+        "json_text": '{"image_id":"test"}',
+    })
+
+    assert result == {"warning": None}
+    assert paths.NEXTBOOT_CFG.read_text() == "menuentry test {}\n"
+    assert calls == [[
+        "grub-editenv", str(bootenv), "set", "boot_attempts=0", "next_entry=pending_boot",
+    ]]
+
+
+@pytest.mark.asyncio
+async def test_write_nextboot_repairs_a_missing_bootenv(tmp_path, monkeypatch):
+    import subprocess
+
+    from app.daemon import server
+
+    state = tmp_path / "state"
+    monkeypatch.setattr(paths, "STATE_DIR", state)
+    monkeypatch.setattr(paths, "NEXTBOOT_CFG", state / "nextboot.cfg")
+    monkeypatch.setattr(paths, "NEXTBOOT_JSON", state / "nextboot.json")
+    monkeypatch.setattr(paths, "BOOTENV", state / "missing-bootenv")
+    calls = []
+
+    def run(argv, **_kwargs):
+        calls.append(argv)
+        if argv[-1] == "create":
+            Path(argv[1]).write_bytes(b"# GRUB Environment Block\n")
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(server.subprocess, "run", run)
+
+    result = await server.handle_write_nextboot({"cfg_text": "x", "json_text": "{}"})
+
+    assert result == {"warning": None}
+    assert paths.BOOTENV.exists()
+    assert calls[0][-1] == "create"
+    assert calls[1][-2:] == ["boot_attempts=0", "next_entry=pending_boot"]
+
+
+@pytest.mark.asyncio
+async def test_reboot_rearms_pending_entry_and_does_not_wait_for_systemd(tmp_path, monkeypatch):
+    import subprocess
+
+    from app.daemon import server
+
+    state = tmp_path / "state"
+    state.mkdir()
+    bootenv = state / "bootenv"
+    bootenv.write_bytes(b"# GRUB Environment Block\n")
+    nextboot = state / "nextboot.cfg"
+    nextboot.write_text("menuentry test {}\n")
+    monkeypatch.setattr(paths, "BOOTENV", bootenv)
+    monkeypatch.setattr(paths, "NEXTBOOT_CFG", nextboot)
+    monkeypatch.setattr(server, "_flush_penlive_storage", lambda: None)
+    monkeypatch.setattr(server, "_release_penlive_mounts", lambda: None)
+    calls = []
+
+    def run(argv, **_kwargs):
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(server.subprocess, "run", run)
+
+    await server.handle_reboot({})
+
+    assert calls[0] == ["grub-editenv", str(bootenv), "set", "next_entry=pending_boot"]
+    assert calls[1] == ["systemctl", "--no-block", "reboot"]
+
+
 # ---- read-only PENSYS: "[Errno 30] ... /boot/extracted" ----------------------
 
 @pytest.mark.asyncio
@@ -366,6 +460,24 @@ async def test_network_status_collapses_duplicate_lookups(monkeypatch):
     assert network._STATUS_TTL_SECONDS <= 5
 
 
+@pytest.mark.asyncio
+async def test_first_run_setup_state_does_not_wait_for_network(monkeypatch):
+    """The wizard is required on first run regardless of NetworkManager state."""
+    from app.routers import system_info
+
+    monkeypatch.setattr(system_info.setup, "is_completed", lambda: False)
+
+    async def unexpected_network_call():
+        raise AssertionError("first-run startup must not wait for NetworkManager")
+
+    monkeypatch.setattr(system_info.network, "status", unexpected_network_call)
+
+    state = await system_info.setup_state()
+
+    assert state["needs_setup"] is True
+    assert state["reason"] == "first_run"
+
+
 # ---- downloads that stalled, froze the app, or died after a cancel -----------
 
 TORRENT_ENTRY = {
@@ -438,6 +550,60 @@ async def test_cancel_waits_for_its_watcher_before_returning(staged, monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_cancel_finds_a_queued_download_by_path_after_gid_changed(staged, monkeypatch):
+    """A restored queued item can have a new gid; cancel must still free its slot."""
+    from app.services import aria2
+
+    removed: list[str] = []
+
+    async def remove(gid):
+        removed.append(gid)
+        if gid == "gid1":
+            raise aria2.Aria2Error("GID not found")
+
+    monkeypatch.setattr(aria2, "remove", remove)
+    monkeypatch.setattr(aria2, "remove_download_result", lambda _gid: _async(None))
+    monkeypatch.setattr(aria2, "tell_active", lambda: _async([]))
+    monkeypatch.setattr(
+        aria2,
+        "tell_waiting",
+        lambda: _async([{
+            "gid": "restored-gid", "status": "waiting",
+            "files": [{"path": str(staged["part"])}],
+        }]),
+    )
+
+    await downloader.cancel("debian-13-live-standard")
+
+    assert removed == ["gid1", "restored-gid"]
+    assert repo.latest_download_for_image("debian-13-live-standard")["state"] == "cancelled"
+    assert not staged["part"].exists()
+
+
+@pytest.mark.asyncio
+async def test_cancel_returns_when_aria2_rpc_is_stuck(staged, monkeypatch):
+    """Cancel must settle the UI and retry remotely instead of hanging forever."""
+    import asyncio
+
+    from app.services import aria2
+
+    never = asyncio.Event()
+
+    async def hangs(*_args, **_kwargs):
+        await never.wait()
+
+    monkeypatch.setattr(downloader, "CANCEL_RPC_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(aria2, "remove", hangs)
+    monkeypatch.setattr(aria2, "tell_active", hangs)
+    monkeypatch.setattr(aria2, "tell_waiting", hangs)
+
+    await asyncio.wait_for(downloader.cancel("debian-13-live-standard"), timeout=0.2)
+
+    assert repo.latest_download_for_image("debian-13-live-standard")["state"] == "cancelled"
+    assert "debian-13-live-standard" in downloader._cancelling
+
+
+@pytest.mark.asyncio
 async def test_resume_keeps_asking_until_aria2_answers(staged, monkeypatch):
     """aria2 is ordered before the API only by Type=exec, which says nothing
     about its RPC port being bound. One failed call used to end the matter for
@@ -461,6 +627,7 @@ async def test_resume_keeps_asking_until_aria2_answers(staged, monkeypatch):
 
     monkeypatch.setattr(aria2, "tell_active", tell_active)
     monkeypatch.setattr(aria2, "tell_waiting", lambda: _async([]))
+    monkeypatch.setattr(aria2, "tell_stopped", lambda: _async([]))
 
     async def fake_watch(image_id, row_id, gid, sha):
         watched.append((image_id, gid))
@@ -472,6 +639,111 @@ async def test_resume_keeps_asking_until_aria2_answers(staged, monkeypatch):
 
     assert attempts["n"] == 3, "gave up before aria2 was ready"
     assert watched == [("debian-13-live-standard", "gid1")]
+
+
+@pytest.mark.asyncio
+async def test_watcher_follows_a_restored_download_with_a_new_gid(staged, monkeypatch):
+    """An aria2 restart may retain the partial path but replace its GID."""
+    from app.services import aria2
+
+    async def status(gid):
+        if gid == "gid1":
+            raise aria2.Aria2Error("GID not found")
+        return {
+            "gid": gid, "status": "error", "completedLength": "20",
+            "downloadSpeed": "0", "errorMessage": "mirror failed",
+            "files": [{"path": str(staged["part"])}],
+        }
+
+    monkeypatch.setattr(aria2, "status", status)
+    monkeypatch.setattr(aria2, "tell_active", lambda: _async([{
+        "gid": "restored-gid", "status": "active", "completedLength": "10",
+        "downloadSpeed": "5", "files": [{"path": str(staged["part"])}],
+    }]))
+    monkeypatch.setattr(aria2, "tell_waiting", lambda: _async([]))
+    monkeypatch.setattr(aria2, "tell_stopped", lambda: _async([]))
+    monkeypatch.setattr(downloader.asyncio, "sleep", lambda _seconds: _async(None))
+
+    await downloader._watch(
+        "debian-13-live-standard", staged["download_id"], "gid1", None
+    )
+
+    row = repo.get_download(staged["download_id"])
+    assert row["gid"] == "restored-gid"
+    assert row["state"] == "error"
+    assert row["error"] == "mirror failed"
+
+
+def test_resume_prefers_live_path_over_a_stale_stopped_gid(staged):
+    """Old stopped results must not hide a restored active transfer."""
+    active = {
+        "gid": "restored-gid", "status": "active",
+        "files": [{"path": str(staged["part"])}],
+    }
+    stale = {
+        "gid": "gid1", "status": "error",
+        "files": [{"path": str(staged["part"])}],
+    }
+
+    plans, _cancellations = downloader._plan_reattach([active], [], [stale])
+
+    assert plans[0][2] == "restored-gid"
+    assert repo.get_download(staged["download_id"])["gid"] == "restored-gid"
+
+
+@pytest.mark.asyncio
+async def test_unchanged_queued_download_does_not_keep_writing_sqlite(staged, monkeypatch):
+    from app.services import aria2
+
+    states = [
+        {"status": "waiting", "completedLength": "0", "downloadSpeed": "0"},
+        {"status": "waiting", "completedLength": "0", "downloadSpeed": "0"},
+        {"status": "removed", "completedLength": "0", "downloadSpeed": "0"},
+    ]
+    writes = []
+    real_update = repo.update_download_progress
+
+    async def status(_gid):
+        return states.pop(0)
+
+    def update(*args, **kwargs):
+        writes.append(kwargs)
+        real_update(*args, **kwargs)
+
+    monkeypatch.setattr(aria2, "status", status)
+    monkeypatch.setattr(repo, "update_download_progress", update)
+    monkeypatch.setattr(downloader.asyncio, "sleep", lambda _seconds: _async(None))
+
+    await downloader._watch(
+        "debian-13-live-standard", staged["download_id"], "gid1", None
+    )
+
+    assert len(writes) == 1
+    assert writes[0]["state"] == "queued"
+
+
+@pytest.mark.asyncio
+async def test_verification_pauses_and_resumes_the_download_queue(staged, monkeypatch):
+    from app.services import aria2
+
+    events = []
+    monkeypatch.setattr(aria2, "status", lambda _gid: _async({
+        "status": "complete", "completedLength": "100", "downloadSpeed": "0",
+        "files": [{"path": str(staged["part"])}],
+    }))
+    monkeypatch.setattr(aria2, "pause_all", lambda: _async(events.append("pause")))
+    monkeypatch.setattr(aria2, "unpause_all", lambda: _async(events.append("resume")))
+
+    async def finalize(*_args):
+        events.append("finalize")
+
+    monkeypatch.setattr(downloader, "_finalize", finalize)
+
+    await downloader._watch(
+        "debian-13-live-standard", staged["download_id"], "gid1", staged["sha256"]
+    )
+
+    assert events == ["pause", "finalize", "resume"]
 
 
 @pytest.mark.asyncio
@@ -492,6 +764,7 @@ async def test_resume_matches_by_path_when_aria2_hands_back_a_new_gid(staged, mo
         lambda: _async([{"gid": "gid-after-restart", "files": [{"path": str(staged["part"])}]}]),
     )
     monkeypatch.setattr(aria2, "tell_waiting", lambda: _async([]))
+    monkeypatch.setattr(aria2, "tell_stopped", lambda: _async([]))
 
     async def fake_watch(image_id, row_id, gid, sha):
         watched.append((image_id, gid))
@@ -504,3 +777,102 @@ async def test_resume_matches_by_path_when_aria2_hands_back_a_new_gid(staged, mo
     assert watched == [("debian-13-live-standard", "gid-after-restart")]
     # The row has to learn the new gid, or the next restart repeats the problem.
     assert repo.latest_download_for_image("debian-13-live-standard")["gid"] == "gid-after-restart"
+
+
+@pytest.mark.asyncio
+async def test_waiting_download_is_exposed_as_queued(staged, monkeypatch):
+    """With one USB writer, later downloads must visibly wait and remain cancellable."""
+    from app.services import aria2
+
+    states = iter([
+        {
+            "gid": "gid1", "status": "waiting", "completedLength": "0",
+            "downloadSpeed": "0", "files": [{"path": str(staged["part"])}],
+        },
+        {
+            "gid": "gid1", "status": "error", "completedLength": "0",
+            "downloadSpeed": "0", "errorMessage": "test stop",
+            "files": [{"path": str(staged["part"])}],
+        },
+    ])
+    seen: list[str | None] = []
+    real_update = repo.update_download_progress
+
+    def capture(download_id, *, progress_bytes, speed_bps, state=None):
+        seen.append(state)
+        real_update(
+            download_id, progress_bytes=progress_bytes, speed_bps=speed_bps, state=state
+        )
+
+    monkeypatch.setattr(aria2, "status", lambda _gid: _async(next(states)))
+    monkeypatch.setattr(repo, "update_download_progress", capture)
+    monkeypatch.setattr(downloader, "POLL_INTERVAL_SECONDS", 0)
+
+    await downloader._watch(
+        "debian-13-live-standard", staged["download_id"], "gid1", None
+    )
+
+    assert seen == ["queued"]
+
+
+@pytest.mark.asyncio
+async def test_resume_observes_download_completed_while_api_was_down(staged, monkeypatch):
+    """A stopped complete result must not leave the UI frozen at old progress."""
+    import asyncio
+
+    from app.services import aria2
+
+    watched: list[tuple[str, str]] = []
+    monkeypatch.setattr(paths, "OFFLINE", False)
+    monkeypatch.setattr(aria2, "tell_active", lambda: _async([]))
+    monkeypatch.setattr(aria2, "tell_waiting", lambda: _async([]))
+    monkeypatch.setattr(
+        aria2,
+        "tell_stopped",
+        lambda: _async([{
+            "gid": "gid1", "status": "complete",
+            "files": [{"path": str(staged["part"])}],
+        }]),
+    )
+
+    async def fake_watch(image_id, _row_id, gid, _sha):
+        watched.append((image_id, gid))
+
+    monkeypatch.setattr(downloader, "_watch", fake_watch)
+    await downloader._resume_watchers_when_aria2_answers()
+    await asyncio.sleep(0)
+
+    assert watched == [("debian-13-live-standard", "gid1")]
+
+
+@pytest.mark.asyncio
+async def test_resume_finishes_a_cancel_left_pending_during_restart(staged, monkeypatch):
+    """A cancelled but live aria2 item must not invisibly occupy the queue."""
+    import asyncio
+
+    from app.services import aria2
+
+    repo.finish_download(staged["download_id"], state="cancelled")
+    repo.set_image_status("debian-13-live-standard", "not_downloaded")
+    retried: list[tuple[str, str | None]] = []
+    monkeypatch.setattr(paths, "OFFLINE", False)
+    monkeypatch.setattr(
+        aria2,
+        "tell_active",
+        lambda: _async([{
+            "gid": "gid1", "status": "active",
+            "files": [{"path": str(staged["part"])}],
+        }]),
+    )
+    monkeypatch.setattr(aria2, "tell_waiting", lambda: _async([]))
+    monkeypatch.setattr(aria2, "tell_stopped", lambda: _async([]))
+
+    async def fake_retry(image_id, gid, _path):
+        retried.append((image_id, gid))
+
+    monkeypatch.setattr(downloader, "_retry_remote_cancel", fake_retry)
+
+    await downloader._resume_watchers_when_aria2_answers()
+    await asyncio.sleep(0)
+
+    assert retried == [("debian-13-live-standard", "gid1")]

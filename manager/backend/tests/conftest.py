@@ -37,5 +37,13 @@ def clear_download_watchers():
     from app.services import downloader
 
     downloader._active.clear()
+    downloader._cancelling.clear()
+    downloader._queue_resume_task = None
     yield
+    for task in downloader._cancelling.values():
+        task.cancel()
     downloader._active.clear()
+    downloader._cancelling.clear()
+    if downloader._queue_resume_task is not None:
+        downloader._queue_resume_task.cancel()
+    downloader._queue_resume_task = None

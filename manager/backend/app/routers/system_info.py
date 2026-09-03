@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -21,7 +23,17 @@ def get_sysinfo():
 
 @router.get("/setup/state")
 async def setup_state():
-    net = await network.status()
+    # First-run state is entirely local and always opens the wizard, so asking
+    # NetworkManager first only makes the initial screen slower. On later boots
+    # retain the offline-wizard behaviour, but do not let a wedged nmcli call
+    # keep React on its loading screen for the frontend's full request timeout.
+    completed = await asyncio.to_thread(setup.is_completed)
+    if not completed:
+        return setup.state(network_connected=False)
+    try:
+        net = await asyncio.wait_for(network.status(), timeout=2)
+    except asyncio.TimeoutError:
+        return setup.state(network_connected=True)
     return setup.state(network_connected=net.connected)
 
 

@@ -132,14 +132,19 @@ export default function App() {
     });
 
   if (powering) {
+    const rebooting = powering === 'reboot';
     return (
       <div className="loading-screen">
         <div className="loading-mark"><PenLiveMark size={42} /></div>
-        <div className="loading-title">Shutting down</div>
+        <div className="loading-title">{rebooting ? 'Restarting' : 'Shutting down'}</div>
         <div className="loading-copy">
-          <span className="spinner" /> Unmounting drives and stopping downloads…
+          <span className="spinner" /> Saving data and preparing {rebooting ? 'the selected system' : 'power off'}…
         </div>
-        <div className="loading-copy">The screen goes blank when it is safe to unplug the stick.</div>
+        <div className="loading-copy">
+          {rebooting
+            ? 'The selected system will start automatically after the firmware screen.'
+            : 'The screen goes blank when it is safe to unplug the stick.'}
+        </div>
       </div>
     );
   }
@@ -184,7 +189,15 @@ export default function App() {
         onPower={powerMenu}
       />
 
-      {tab === 'systems' && <Systems network={network} onNotice={setNotice} onOpenFiles={openFiles} onOpenVm={openVm} />}
+      {tab === 'systems' && (
+        <Systems
+          network={network}
+          onNotice={setNotice}
+          onOpenFiles={openFiles}
+          onOpenVm={openVm}
+          onPowering={setPowering}
+        />
+      )}
       {tab === 'files' && <FileManager onNotice={setNotice} target={fileTarget} />}
       {tab === 'tools' && <Tools />}
       {tab === 'terminal' && <Terminal />}

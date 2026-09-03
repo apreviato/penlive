@@ -142,6 +142,23 @@ async def test_new_downloads_retry_transient_network_outages(monkeypatch):
     assert options["max-tries"] == "0"
     assert options["retry-wait"] == "5"
     assert options["auto-file-renaming"] == "false"
+    assert options["max-connection-per-server"] == "1"
+    assert options["split"] == "1"
+
+
+@pytest.mark.asyncio
+async def test_cancel_uses_force_remove_for_a_stuck_transfer(monkeypatch):
+    captured = {}
+
+    async def fake_call(method, params):
+        captured["method"] = method
+        captured["params"] = params
+
+    monkeypatch.setattr(aria2, "_call", fake_call)
+
+    await aria2.remove("stuck-gid")
+
+    assert captured == {"method": "aria2.forceRemove", "params": ["stuck-gid"]}
 
 
 @pytest.mark.asyncio

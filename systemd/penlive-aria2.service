@@ -16,15 +16,22 @@ ExecStartPre=/usr/bin/touch /data/images/.downloads/aria2.session
 # RPC is bound to loopback with no secret because the socket is unreachable
 # from outside the machine and the only local account that could reach it is
 # the same unprivileged user that owns the downloads.
+# Whole-image downloads are serialized and each HTTP image is written in one
+# sequential stream. Parallel byte ranges look faster on an SSD, but turn into
+# random writes on inexpensive flash drives and can stall the whole kiosk.
+# A memory cache coalesces smaller network writes before they reach PENDATA.
 ExecStart=/usr/bin/aria2c \
     --enable-rpc \
     --rpc-listen-all=false \
     --rpc-listen-port=6800 \
     --dir=/data/images/.downloads \
     --continue=true \
-    --max-concurrent-downloads=2 \
-    --max-connection-per-server=4 \
-    --split=4 \
+    --max-concurrent-downloads=1 \
+    --max-connection-per-server=1 \
+    --split=1 \
+    --disk-cache=64M \
+    --auto-save-interval=10 \
+    --summary-interval=0 \
     --auto-file-renaming=false \
     --allow-overwrite=true \
     --file-allocation=none \
@@ -38,12 +45,11 @@ ExecStart=/usr/bin/aria2c \
 Restart=always
 RestartSec=2
 # aria2 asked to stop with transfers running can take a long time to wind its
-# connections down, and systemd's default is to wait 90 seconds before it
-# insists. Shutdown happens with the kiosk already gone, so that wait is 90
-# seconds of bare grey screen after the user pressed Shut down. Resuming is
+# connections down. Shutdown happens with the kiosk already gone, so bound
+# that blank-screen wait. Resuming is
 # what the .aria2 control files beside each partial file are for, so being
 # killed here costs nothing.
-TimeoutStopSec=10
+TimeoutStopSec=5
 KillMode=mixed
 
 NoNewPrivileges=yes

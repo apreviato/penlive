@@ -180,51 +180,159 @@ async def handle_umount_device(args: dict) -> dict:
 
 async def handle_write_nextboot(args: dict) -> dict:
     """Atomically publish the pending-boot menuentry GRUB will source next boot."""
+    _require_pensys_mount()
     try:
         paths.STATE_DIR.mkdir(parents=True, exist_ok=True)
         tmp_cfg = paths.NEXTBOOT_CFG.with_suffix(".cfg.tmp")
         tmp_json = paths.NEXTBOOT_JSON.with_suffix(".json.tmp")
-        tmp_cfg.write_text(args["cfg_text"], encoding="utf-8")
-        tmp_json.write_text(args["json_text"], encoding="utf-8")
+        _write_durable(tmp_cfg, args["cfg_text"])
+        _write_durable(tmp_json, args["json_text"])
         tmp_cfg.replace(paths.NEXTBOOT_CFG)
         tmp_json.replace(paths.NEXTBOOT_JSON)
+        _fsync_directory(paths.STATE_DIR)
     except OSError as exc:
         raise RuntimeError(
             f"could not write {paths.NEXTBOOT_CFG}: {exc.strerror or exc}. "
             "The PENSYS partition may be mounted read-only or out of space."
         ) from exc
 
-    return {"warning": _reset_boot_attempts()}
+    warning = _reset_boot_attempts(arm_pending=True)
+    if warning:
+        paths.NEXTBOOT_CFG.unlink(missing_ok=True)
+        paths.NEXTBOOT_JSON.unlink(missing_ok=True)
+        raise RuntimeError(f"could not arm the selected ISO for the next boot: {warning}")
+    return {"warning": None}
+
+
+def _require_pensys_mount() -> None:
+    """Ensure boot state is being written where the firmware actually reads it."""
+    if paths.DEV_MODE:
+        return
+    if not os.path.ismount(paths.BOOT_MOUNT):
+        raise RuntimeError(
+            f"{paths.BOOT_MOUNT} is not mounted; refusing to report a boot that the firmware "
+            "would never see"
+        )
+    try:
+        mounted_source = subprocess.run(
+            ["findmnt", "-nro", "SOURCE", "--target", str(paths.BOOT_MOUNT)],
+            check=True, capture_output=True, text=True, timeout=5,
+        ).stdout.strip()
+        pensys_source = subprocess.run(
+            ["blkid", "-L", "PENSYS"], check=True, capture_output=True, text=True, timeout=5,
+        ).stdout.strip()
+    except (FileNotFoundError, subprocess.SubprocessError) as exc:
+        raise RuntimeError(f"could not verify the PENSYS boot partition: {exc}") from exc
+    if not mounted_source or not pensys_source:
+        raise RuntimeError("could not identify the mounted PENSYS boot partition")
+    if Path(mounted_source).resolve() != Path(pensys_source).resolve():
+        raise RuntimeError(
+            f"{paths.BOOT_MOUNT} is mounted from {mounted_source}, not PENSYS ({pensys_source})"
+        )
 
 
 async def handle_clear_nextboot(args: dict) -> dict:
     paths.NEXTBOOT_CFG.unlink(missing_ok=True)
     paths.NEXTBOOT_JSON.unlink(missing_ok=True)
-    return {"warning": _reset_boot_attempts()}
+    return {"warning": _reset_boot_attempts(arm_pending=False)}
 
 
-def _reset_boot_attempts() -> str | None:
-    """Zero GRUB's pending-boot watchdog counter, reporting rather than raising.
+def _write_durable(path: Path, text: str) -> None:
+    with path.open("w", encoding="utf-8") as stream:
+        stream.write(text)
+        stream.flush()
+        os.fsync(stream.fileno())
 
-    The menuentry is already published by the time this runs, so failing the
-    whole request here told the user their boot had not been scheduled when in
-    fact it had. A stale counter only suppresses the entry once it reaches 3,
-    so a warning is the honest severity.
-    """
+
+def _fsync_directory(path: Path) -> None:
+    if paths.DEV_MODE:
+        return
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _reset_boot_attempts(*, arm_pending: bool | None = None) -> str | None:
+    """Reset the watchdog and optionally set/clear GRUB's one-shot entry."""
+    assignments = ["boot_attempts=0"]
+    if arm_pending is not None:
+        assignments.append("next_entry=pending_boot" if arm_pending else "next_entry=")
+    return _edit_boot_environment(assignments, require_existing=bool(arm_pending))
+
+
+def _arm_pending_boot() -> str | None:
+    """Select the pending entry once without erasing the retry counter."""
+    return _edit_boot_environment(["next_entry=pending_boot"], require_existing=True)
+
+
+def _edit_boot_environment(assignments: list[str], *, require_existing: bool) -> str | None:
     if not paths.BOOTENV.exists():
-        return None  # grub.cfg defaults boot_attempts to 0 when the file is absent
+        if require_existing:
+            warning = _create_boot_environment()
+            if warning:
+                return warning
+        else:
+            return None
     try:
         subprocess.run(
-            ["grub-editenv", str(paths.BOOTENV), "set", "boot_attempts=0"],
+            ["grub-editenv", str(paths.BOOTENV), "set", *assignments],
             check=True, capture_output=True, text=True, timeout=15,
         )
     except FileNotFoundError:
-        return "grub-editenv is not installed, so GRUB's boot-attempt counter was not reset"
+        return "grub-editenv is not installed, so GRUB's boot state could not be updated"
     except subprocess.TimeoutExpired:
-        return "grub-editenv did not finish, so GRUB's boot-attempt counter was not reset"
+        return "grub-editenv did not finish, so GRUB's boot state could not be updated"
+    except subprocess.CalledProcessError:
+        # Old sticks and interrupted filesystem repairs can leave a zero-byte
+        # or otherwise invalid environment block behind. It only contains our
+        # one-shot selector and retry count, so replacing it is both safe and
+        # much more useful than permanently disabling native boot.
+        warning = _create_boot_environment()
+        if warning:
+            return warning
+        try:
+            subprocess.run(
+                ["grub-editenv", str(paths.BOOTENV), "set", *assignments],
+                check=True, capture_output=True, text=True, timeout=15,
+            )
+        except FileNotFoundError:
+            return "grub-editenv is not installed, so GRUB's boot state could not be updated"
+        except subprocess.TimeoutExpired:
+            return "grub-editenv did not finish, so GRUB's boot state could not be updated"
+        except subprocess.CalledProcessError as exc:
+            detail = (exc.stderr or "").strip() or f"exit {exc.returncode}"
+            return f"GRUB's boot state could not be updated ({detail})"
+    return None
+
+
+def _create_boot_environment() -> str | None:
+    """Atomically create/repair the small GRUB environment block on PENSYS."""
+    temporary = paths.BOOTENV.with_name(f".{paths.BOOTENV.name}.tmp")
+    try:
+        paths.BOOTENV.parent.mkdir(parents=True, exist_ok=True)
+        temporary.unlink(missing_ok=True)
+        subprocess.run(
+            ["grub-editenv", str(temporary), "create"],
+            check=True, capture_output=True, text=True, timeout=15,
+        )
+        temporary.replace(paths.BOOTENV)
+        _fsync_directory(paths.BOOTENV.parent)
+    except FileNotFoundError:
+        return "grub-editenv is not installed, so the GRUB environment block could not be created"
+    except subprocess.TimeoutExpired:
+        return "grub-editenv did not finish while creating the GRUB environment block"
     except subprocess.CalledProcessError as exc:
         detail = (exc.stderr or "").strip() or f"exit {exc.returncode}"
-        return f"GRUB's boot-attempt counter was not reset ({detail})"
+        return f"the GRUB environment block could not be created ({detail})"
+    except OSError as exc:
+        return f"the GRUB environment block could not be written ({exc.strerror or exc})"
+    finally:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
     return None
 
 
@@ -274,6 +382,7 @@ def _release_penlive_mounts() -> None:
     is shutting down. Lazy unmounts detach them immediately; the kernel finishes
     when the last reference goes.
     """
+    mountpoints: list[str] = []
     for root in (paths.MOUNTS_DIR, DRIVE_MOUNTS):
         try:
             entries = sorted(root.iterdir())
@@ -284,15 +393,42 @@ def _release_penlive_mounts() -> None:
                 continue
             # Best effort by definition: a path that was never mounted, or that
             # something else already released, must not stop the shutdown.
+            mountpoints.append(str(mountpoint))
+    if mountpoints:
+        # One bounded invocation avoids ten seconds of waiting per mounted item
+        # before systemd has even received the reboot/poweroff request.
+        try:
             subprocess.run(
-                ["umount", "-l", str(mountpoint)],
-                capture_output=True, check=False, timeout=10,
+                ["umount", "-l", *mountpoints],
+                capture_output=True, check=False, timeout=3,
             )
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            # Never prevent the requested power transition; systemd gets one
+            # more chance to release these mounts during normal shutdown.
+            pass
+
+
+def _flush_penlive_storage() -> None:
+    """Push boot metadata and completed writes out while the UI is still up."""
+    targets = [str(path) for path in (paths.BOOT_MOUNT, paths.DATA_MOUNT) if path.exists()]
+    if not targets:
+        return
+    try:
+        subprocess.run(["sync", "-f", *targets], check=False, timeout=20)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        # systemd still performs its normal final filesystem sync.
+        pass
 
 
 async def handle_reboot(args: dict) -> dict:
+    if paths.NEXTBOOT_CFG.exists():
+        _require_pensys_mount()
+        warning = _arm_pending_boot()
+        if warning:
+            raise RuntimeError(f"could not arm the selected ISO before restart: {warning}")
+    _flush_penlive_storage()
     _release_penlive_mounts()
-    subprocess.Popen(["systemctl", "reboot"])
+    subprocess.run(["systemctl", "--no-block", "reboot"], check=True, timeout=5)
     return {"rebooting": True}
 
 
@@ -321,8 +457,9 @@ async def handle_write_usb(args: dict) -> dict:
 
 
 async def handle_poweroff(args: dict) -> dict:
+    _flush_penlive_storage()
     _release_penlive_mounts()
-    subprocess.Popen(["systemctl", "poweroff"])
+    subprocess.run(["systemctl", "--no-block", "poweroff"], check=True, timeout=5)
     return {"powering_off": True}
 
 
@@ -432,9 +569,8 @@ async def handle_set_keyboard(args: dict) -> dict:
 def _run_nmcli(args: list[str], *, check: bool = True, timeout: int = 35) -> subprocess.CompletedProcess:
     """Run one fixed NetworkManager operation with stable, non-localised output.
 
-    The timeout is a parameter because the daemon handles one request at a time:
-    a query the UI blocks its first paint on must not be allowed to sit for as
-    long as a connect attempt legitimately can.
+    The timeout is a parameter because a query the UI uses during first paint
+    must not be allowed to sit as long as a connect attempt legitimately can.
     """
     try:
         proc = subprocess.run(
@@ -489,6 +625,12 @@ def _require_wifi_text(value: object, name: str, *, allow_empty: bool = False) -
 
 
 async def handle_network_scan(args: dict) -> dict:
+    # nmcli is a blocking D-Bus client. Keep it off the daemon's event loop so
+    # a slow Wi-Fi scan cannot delay a simultaneous Boot, Cancel or power call.
+    return await asyncio.to_thread(_network_scan, args)
+
+
+def _network_scan(args: dict) -> dict:
     # A previous soft block is common after boot/resume. Hard rfkill remains an
     # actionable nmcli error, which the UI now displays rather than hiding.
     _run_nmcli(["radio", "wifi", "on"], check=False)
@@ -512,14 +654,17 @@ async def handle_network_scan(args: dict) -> dict:
     return {"networks": networks}
 
 
-# The status query is on the path the UI waits for before its first paint, and
-# the daemon answers one request at a time, so three nmcli calls at the default
-# 35s ceiling could hold a booting kiosk on a blank screen for over a minute.
+# The status query is on the path used during the UI's first paint, so three
+# nmcli calls at the default 35s ceiling could leave stale status for a minute.
 # NetworkManager answers all three of these in milliseconds when it is healthy.
 STATUS_TIMEOUT_SECONDS = 8
 
 
 async def handle_network_status(args: dict) -> dict:
+    return await asyncio.to_thread(_network_status, args)
+
+
+def _network_status(args: dict) -> dict:
     # `connectivity check` forces a live probe of NetworkManager's connectivity
     # URL, which blocks for seconds on a machine that is still associating --
     # exactly when the kiosk is trying to come up. The plain form reports the
@@ -567,6 +712,10 @@ async def handle_network_status(args: dict) -> dict:
 
 
 async def handle_network_connect(args: dict) -> dict:
+    return await asyncio.to_thread(_network_connect, args)
+
+
+def _network_connect(args: dict) -> dict:
     ssid = _require_wifi_text(args.get("ssid"), "SSID")
     password = _require_wifi_text(args.get("password", ""), "password", allow_empty=True)
     _run_nmcli(["radio", "wifi", "on"], check=False)
@@ -589,7 +738,7 @@ async def handle_network_connect(args: dict) -> dict:
             except RuntimeError as retry_exc:
                 message = str(retry_exc)
             else:
-                return await handle_network_status({"refresh": True})
+                return _network_status({"refresh": True})
 
         lower = message.lower()
         if any(fragment in lower for fragment in (
@@ -597,7 +746,7 @@ async def handle_network_connect(args: dict) -> dict:
         )):
             raise RuntimeError("The Wi-Fi password was rejected. Check it and try again.") from exc
         raise RuntimeError(f"Could not connect to {ssid}: {message}") from exc
-    return await handle_network_status({"refresh": True})
+    return _network_status({"refresh": True})
 
 
 

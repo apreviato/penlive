@@ -20,39 +20,49 @@ def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
 # ---- images ----------------------------------------------------------------
 
 def upsert_image_from_catalog(entry: dict[str, Any]) -> None:
+    upsert_images_from_catalog([entry])
+
+
+def upsert_images_from_catalog(entries: list[dict[str, Any]]) -> None:
+    """Apply a catalog refresh in one transaction instead of one flash sync per row."""
     with transaction() as conn:
-        existing = conn.execute(
-            "SELECT status, path, sha256, verified FROM images WHERE id = ?", (entry["id"],)
-        ).fetchone()
-        conn.execute(
-            """
-            INSERT INTO images (id, name, family, version, architecture, adapter, source_url,
-                                 sha256, size_bytes, capabilities_json, status, verified, origin)
-            VALUES (:id, :name, :family, :version, :architecture, :adapter, :source_url,
-                    :sha256, :size_bytes, :capabilities_json, :status, :verified, 'catalog')
-            ON CONFLICT(id) DO UPDATE SET
-                name=excluded.name, family=excluded.family, version=excluded.version,
-                architecture=excluded.architecture, adapter=excluded.adapter,
-                source_url=excluded.source_url, sha256=excluded.sha256,
-                size_bytes=excluded.size_bytes, capabilities_json=excluded.capabilities_json,
-                origin='catalog',
-                updated_at=datetime('now')
-            """,
-            {
-                "id": entry["id"],
-                "name": entry["name"],
-                "family": entry["family"],
-                "version": entry.get("version"),
-                "architecture": entry.get("architecture", "amd64"),
-                "adapter": entry.get("adapter"),
-                "source_url": (entry.get("sources") or [{}])[0].get("url"),
-                "sha256": entry.get("sha256"),
-                "size_bytes": entry.get("size"),
-                "capabilities_json": json.dumps(entry.get("capabilities", {})),
-                "status": existing["status"] if existing else "not_downloaded",
-                "verified": existing["verified"] if existing else 0,
-            },
-        )
+        for entry in entries:
+            _upsert_catalog_entry(conn, entry)
+
+
+def _upsert_catalog_entry(conn: sqlite3.Connection, entry: dict[str, Any]) -> None:
+    existing = conn.execute(
+        "SELECT status, path, sha256, verified FROM images WHERE id = ?", (entry["id"],)
+    ).fetchone()
+    conn.execute(
+        """
+        INSERT INTO images (id, name, family, version, architecture, adapter, source_url,
+                             sha256, size_bytes, capabilities_json, status, verified, origin)
+        VALUES (:id, :name, :family, :version, :architecture, :adapter, :source_url,
+                :sha256, :size_bytes, :capabilities_json, :status, :verified, 'catalog')
+        ON CONFLICT(id) DO UPDATE SET
+            name=excluded.name, family=excluded.family, version=excluded.version,
+            architecture=excluded.architecture, adapter=excluded.adapter,
+            source_url=excluded.source_url, sha256=excluded.sha256,
+            size_bytes=excluded.size_bytes, capabilities_json=excluded.capabilities_json,
+            origin='catalog',
+            updated_at=datetime('now')
+        """,
+        {
+            "id": entry["id"],
+            "name": entry["name"],
+            "family": entry["family"],
+            "version": entry.get("version"),
+            "architecture": entry.get("architecture", "amd64"),
+            "adapter": entry.get("adapter"),
+            "source_url": (entry.get("sources") or [{}])[0].get("url"),
+            "sha256": entry.get("sha256"),
+            "size_bytes": entry.get("size"),
+            "capabilities_json": json.dumps(entry.get("capabilities", {})),
+            "status": existing["status"] if existing else "not_downloaded",
+            "verified": existing["verified"] if existing else 0,
+        },
+    )
 
 
 def upsert_local_image(image_id: str, name: str, path: str, size_bytes: int) -> None:
@@ -113,12 +123,14 @@ def update_download_progress(download_id: int, *, progress_bytes: int, speed_bps
     with transaction() as conn:
         if state:
             conn.execute(
-                "UPDATE downloads SET progress_bytes=?, speed_bps=?, state=? WHERE id=?",
+                "UPDATE downloads SET progress_bytes=?, speed_bps=?, state=? "
+                "WHERE id=? AND state IN ('queued', 'active', 'verifying')",
                 (progress_bytes, speed_bps, state, download_id),
             )
         else:
             conn.execute(
-                "UPDATE downloads SET progress_bytes=?, speed_bps=? WHERE id=?",
+                "UPDATE downloads SET progress_bytes=?, speed_bps=? "
+                "WHERE id=? AND state IN ('queued', 'active', 'verifying')",
                 (progress_bytes, speed_bps, download_id),
             )
 
@@ -168,6 +180,24 @@ def unfinished_downloads() -> list[dict[str, Any]]:
         seen.add(row["image_id"])
         latest.append(dict(row))
     return latest
+
+
+def cancelled_downloads() -> list[dict[str, Any]]:
+    """Latest per-image rows whose cancellation still has to win after a restart."""
+    rows = db().execute(
+        """
+        SELECT download.*
+        FROM downloads AS download
+        JOIN (
+            SELECT image_id, MAX(id) AS id
+            FROM downloads
+            GROUP BY image_id
+        ) AS latest ON latest.id = download.id
+        WHERE download.state = 'cancelled'
+        ORDER BY download.id DESC
+        """
+    ).fetchall()
+    return [dict(row) for row in rows]
 
 
 def find_download_by_gid(gid: str) -> dict[str, Any] | None:

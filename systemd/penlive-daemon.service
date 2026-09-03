@@ -17,6 +17,8 @@ RuntimeDirectory=penlive
 RuntimeDirectoryMode=0755
 Restart=on-failure
 RestartSec=2
+TimeoutStopSec=5
+KillMode=mixed
 
 # Hardening: the daemon legitimately needs mount/reboot/raw-disk access, so the
 # usual ProtectSystem/PrivateDevices knobs would break it. These are the ones

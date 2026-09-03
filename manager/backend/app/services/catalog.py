@@ -3,6 +3,7 @@ and reconciles it into sqlite so /api/images can just read the DB.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from pathlib import Path
@@ -45,13 +46,18 @@ async def refresh(url: str | None = None) -> dict[str, Any]:
     if data is None:
         raise RuntimeError("no catalog available (network failed and no cached/bundled copy found)")
 
-    paths.CATALOG_DIR.mkdir(parents=True, exist_ok=True)
-    paths.CATALOG_CACHE.write_text(json.dumps(data, indent=2), encoding="utf-8")
-
-    for entry in data.get("systems", []):
-        repo.upsert_image_from_catalog(entry)
+    # Cache writes and the catalog's many small SQLite transactions hit the
+    # same USB persistence layer as the manager database. They are synchronous,
+    # so run them away from the event loop to keep progress/cancel responsive.
+    await asyncio.to_thread(_store, data)
 
     return data
+
+
+def _store(data: dict[str, Any]) -> None:
+    paths.CATALOG_DIR.mkdir(parents=True, exist_ok=True)
+    paths.CATALOG_CACHE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    repo.upsert_images_from_catalog(data.get("systems", []))
 
 
 def cached() -> dict[str, Any]:

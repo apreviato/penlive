@@ -22,6 +22,7 @@ export default function ImageCard({
   const settleRef = useRef(null);
 
   const isDownloading = image.status === 'downloading';
+  const isQueued = progress?.state === 'queued';
 
   useEffect(() => {
     if (!isDownloading) {
@@ -142,7 +143,7 @@ export default function ImageCard({
         <div className="image-name">{image.name}</div>
         <div className="image-sub">
           <span className={`badge badge-${image.status}`}>
-            {STATUS_LABEL[image.status] ?? image.status}
+            {isQueued ? 'queued' : (STATUS_LABEL[image.status] ?? image.status)}
           </span>
           {image.origin === 'local' && <span className="tag">local ISO</span>}
           {!image.verified && downloaded && <span className="tag tag-caution">unverified</span>}
@@ -153,18 +154,26 @@ export default function ImageCard({
 
         {isDownloading && (
           <>
-            <div className="progress">
-              <div className="progress-bar" style={{ width: `${pct}%` }} />
-            </div>
-            <div className="progress-meta">
-              <span>
-                {formatBytes(done)} / {formatBytes(total)} ({pct.toFixed(0)}%)
-              </span>
-              <span>
-                {formatSpeed(progress?.speed_bps)}
-                {eta ? ` · ${eta} left` : ''}
-              </span>
-            </div>
+            {isQueued ? (
+              <div className="progress-meta">
+                <span>Waiting for the current download to finish…</span>
+              </div>
+            ) : (
+              <>
+                <div className="progress">
+                  <div className="progress-bar" style={{ width: `${pct}%` }} />
+                </div>
+                <div className="progress-meta">
+                  <span>
+                    {formatBytes(done)} / {formatBytes(total)} ({pct.toFixed(0)}%)
+                  </span>
+                  <span>
+                    {formatSpeed(progress?.speed_bps)}
+                    {eta ? ` · ${eta} left` : ''}
+                  </span>
+                </div>
+              </>
+            )}
             {progress?.state === 'verifying' && (
               <div className="progress-meta">
                 <span>

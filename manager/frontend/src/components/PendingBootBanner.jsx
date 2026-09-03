@@ -15,8 +15,10 @@ export default function PendingBootBanner({ pending, onClear, onReboot }) {
           </>
         ) : (
           <>
-            <strong>{pending.image_name}</strong> is scheduled for the next boot
-            {pending.attempts > 0 && ` (attempt ${pending.attempts} of ${pending.max_attempts})`}.
+            <strong>{pending.image_name}</strong>{' '}
+            {pending.attempts > 0
+              ? `did not take over the previous boot (attempt ${pending.attempts} of ${pending.max_attempts}). You can retry it.`
+              : 'is scheduled for the next boot.'}
           </>
         )}
       </span>

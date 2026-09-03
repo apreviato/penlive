@@ -30,7 +30,10 @@ async def _prepare_boot_recovering_readonly(iso_path: Path, extract_dir: Path, i
     caller turns it into an explanation.
     """
     try:
-        return prepare_boot(iso_path, extract_dir, iso_rel_path)
+        # ISO directory parsing and kernel/initrd extraction are synchronous
+        # and can take seconds on a slow flash drive. Keep them off FastAPI's
+        # event loop so downloads, progress and Cancel remain responsive.
+        return await asyncio.to_thread(prepare_boot, iso_path, extract_dir, iso_rel_path)
     except OSError as exc:
         if exc.errno not in _NOT_WRITABLE:
             raise
@@ -42,7 +45,7 @@ async def _prepare_boot_recovering_readonly(iso_path: Path, extract_dir: Path, i
             raise HTTPException(500, (
                 f"PenLive's boot partition is read-only and could not be recovered: {remount_exc}"
             )) from exc
-        return prepare_boot(iso_path, extract_dir, iso_rel_path)
+        return await asyncio.to_thread(prepare_boot, iso_path, extract_dir, iso_rel_path)
 
 
 @router.post("")
@@ -158,8 +161,12 @@ async def clear_pending():
 
 @router.post("/reboot")
 async def reboot():
+    if bootmanager.read_pending_boot() is None:
+        raise HTTPException(409, "no system is scheduled for the next boot")
     try:
         await daemon_client.call("reboot")
     except daemon_client.DaemonUnavailable as exc:
         raise HTTPException(503, str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(500, f"could not restart into the selected system: {exc}") from exc
     return {"rebooting": True}

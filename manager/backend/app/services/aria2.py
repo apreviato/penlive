@@ -21,19 +21,24 @@ _id_counter = itertools.count(1)
 
 # One client, not one per call. A watcher polls tellStatus once a second for the
 # whole life of a multi-gigabyte download, and a fresh AsyncClient per poll
-# means a fresh TCP connection per poll -- two concurrent downloads leave a
+# means a fresh TCP connection per poll -- active and queued downloads leave a
 # steady stream of sockets in TIME_WAIT on a machine that has no reason to be
 # opening any. Keyed on the running loop so a test that builds a second loop
 # gets its own client instead of one bound to a loop that has closed.
 _client: httpx.AsyncClient | None = None
 _client_loop: asyncio.AbstractEventLoop | None = None
+RPC_TIMEOUT_SECONDS = 3
+RPC_ATTEMPTS = 3
 
 
 def _http() -> httpx.AsyncClient:
     global _client, _client_loop
     loop = asyncio.get_running_loop()
     if _client is None or _client.is_closed or _client_loop is not loop:
-        _client = httpx.AsyncClient(timeout=15)
+        # This is loopback RPC, not an internet request. If it cannot answer in
+        # a few seconds the daemon is unhealthy; holding every progress watcher
+        # for up to 75 seconds only makes the UI look frozen.
+        _client = httpx.AsyncClient(timeout=RPC_TIMEOUT_SECONDS)
         _client_loop = loop
     return _client
 
@@ -65,14 +70,14 @@ async def _call(method: str, params: list[Any]) -> Any:
     # aria2 is supervised separately and may be between its exit and restart.
     # A short retry window prevents that harmless service transition from
     # cancelling a multi-gigabyte download or rejecting the next click.
-    for attempt in range(5):
+    for attempt in range(RPC_ATTEMPTS):
         try:
             resp = await _http().post(paths.ARIA2_RPC_URL, json=payload)
             resp.raise_for_status()
             break
         except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout) as exc:
             last_connection_error = exc
-            if attempt < 4:
+            if attempt < RPC_ATTEMPTS - 1:
                 await asyncio.sleep(1)
                 continue
             raise Aria2Unavailable(
@@ -97,8 +102,12 @@ async def add_uri(url: str, out_filename: str, download_dir: str) -> str:
         "out": out_filename,
         "continue": "true",
         "auto-file-renaming": "false",
-        "max-connection-per-server": "4",
-        "split": "4",
+        # A USB flash drive handles one sequential writer far better than four
+        # range connections seeking across a multi-gigabyte ISO. aria2's disk
+        # cache still lets the network run ahead in memory and flush in larger
+        # contiguous writes.
+        "max-connection-per-server": "1",
+        "split": "1",
         "allow-overwrite": "true",
         # Wi-Fi can briefly disappear while NetworkManager reconnects. Keep the
         # partial ISO and retry indefinitely instead of turning a momentary
@@ -163,8 +172,20 @@ async def unpause(gid: str) -> None:
     await _call("aria2.unpause", [gid])
 
 
+async def pause_all() -> None:
+    """Immediately pause queued/active transfers during storage-heavy verification."""
+    await _call("aria2.forcePauseAll", [])
+
+
+async def unpause_all() -> None:
+    await _call("aria2.unpauseAll", [])
+
+
 async def remove(gid: str) -> None:
-    await _call("aria2.remove", [gid])
+    # forceRemove also interrupts a transfer whose I/O is currently stuck;
+    # regular remove may wait for that operation and leave the only queue slot
+    # occupied after the UI has already asked to cancel it.
+    await _call("aria2.forceRemove", [gid])
 
 
 async def remove_download_result(gid: str) -> None:

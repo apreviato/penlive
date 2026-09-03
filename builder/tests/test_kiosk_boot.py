@@ -144,8 +144,44 @@ def test_runtime_storage_is_writable_by_the_unprivileged_manager():
     hook = (ROOT / "live" / "config" / "hooks" / "live" / "0300-enable-services.hook.chroot").read_text()
     assert "/boot/extracted" in script
     assert "chown -R penlive:penlive" in script
+    assert "grub-editenv /boot/state/.bootenv.tmp create" in script
+    assert "mv -f /boot/state/.bootenv.tmp /boot/state/bootenv" in script
     assert "Before=penlive-daemon.service penlive-aria2.service penlive-api.service" in unit
+    assert "RequiresMountsFor=/boot /data" in unit
     assert "systemctl enable penlive-storage.service" in hook
+
+
+def test_downloads_are_serialized_to_protect_usb_write_speed():
+    unit = (ROOT / "systemd" / "penlive-aria2.service").read_text()
+
+    assert "--max-concurrent-downloads=1" in unit
+    assert "--max-connection-per-server=1" in unit
+    assert "--split=1" in unit
+    assert "--disk-cache=64M" in unit
+    assert "--auto-save-interval=10" in unit
+
+
+def test_pending_boot_uses_grubs_one_shot_entry():
+    config = (ROOT / "grub" / "grub.cfg").read_text()
+
+    assert 'if [ "x$next_entry" = "xpending_boot" ]' in config
+    assert "set default=pending_boot" in config
+    assert "set timeout=0" in config
+    assert "set next_entry=" in config
+    assert "boot_attempts next_entry" in config
+
+
+def test_power_services_have_bounded_stop_times():
+    units = [
+        ROOT / "systemd" / name
+        for name in (
+            "penlive-kiosk.service", "penlive-api.service",
+            "penlive-daemon.service", "penlive-aria2.service",
+        )
+    ]
+
+    for unit in units:
+        assert "TimeoutStopSec=" in unit.read_text(), unit.name
 
 
 def test_browser_policy_leaves_escape_shortcuts_nowhere_to_navigate():

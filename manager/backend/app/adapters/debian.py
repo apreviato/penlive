@@ -24,6 +24,13 @@ class DebianLiveAdapter(BootAdapter):
             label="Debian Live",
             kernel=kernel.name,
             initrd=initrd.name,
-            cmdline=f"boot=live components findiso=/{iso_rel_path} quiet",
+            # Point live-boot straight at PENDATA. findiso alone scans every
+            # disk and may reject the loop-mounted ISO because its embedded
+            # UUID differs; an explicit live-media device is tried first and
+            # deliberately skips that UUID check in Debian live-boot.
+            cmdline=(
+                "boot=live components "
+                f"live-media=/dev/disk/by-label/PENDATA findiso=/{iso_rel_path} quiet"
+            ),
             iso_rel_path=iso_rel_path,
         )

@@ -40,7 +40,7 @@ export function arrange(images, query) {
     .map(({ img }) => img);
 }
 
-export default function Systems({ network, onNotice, onOpenFiles, onOpenVm }) {
+export default function Systems({ network, onNotice, onOpenFiles, onOpenVm, onPowering }) {
   const [images, setImages] = useState([]);
   const [storage, setStorage] = useState(null);
   const [pending, setPending] = useState(null);
@@ -76,7 +76,10 @@ export default function Systems({ network, onNotice, onOpenFiles, onOpenVm }) {
   const anyDownloading = images.some((image) => image.status === 'downloading');
   useEffect(() => {
     if (!anyDownloading) return undefined;
-    const id = setInterval(load, 2000);
+    // Progress itself comes from each card's WebSocket. This slower fallback
+    // only heals a dropped socket; repeatedly listing the catalog and statting
+    // every ISO during a healthy download just adds USB and database pressure.
+    const id = setInterval(load, 5000);
     return () => clearInterval(id);
   }, [anyDownloading, load]);
 
@@ -109,9 +112,11 @@ export default function Systems({ network, onNotice, onOpenFiles, onOpenVm }) {
       message: 'The machine will restart and boot the scheduled system.',
       confirmLabel: 'Restart',
       onConfirm: async () => {
+        onPowering?.('reboot');
         try {
-          await api.reboot();
+          await api.rebootPending();
         } catch (err) {
+          onPowering?.(null);
           setError(err.message);
         }
       },

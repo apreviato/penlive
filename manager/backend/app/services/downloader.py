@@ -24,9 +24,23 @@ from .inspector import process_downloaded_image
 log = logging.getLogger("penlive.downloader")
 
 POLL_INTERVAL_SECONDS = 1.0
+QUEUED_POLL_INTERVAL_SECONDS = 5.0
 RESUME_RETRY_SECONDS = 5
 RESUME_MAX_ATTEMPTS = 60  # give aria2 five minutes to come up
+GID_RECOVERY_ATTEMPTS = 15  # tolerate a 30-second aria2 session reload
+GID_RECOVERY_INTERVAL_SECONDS = 2
+QUEUE_CONTROL_TIMEOUT_SECONDS = 2
+QUEUE_RESUME_RETRY_SECONDS = 2
+QUEUE_RESUME_MAX_ATTEMPTS = 150
+CANCEL_WATCHER_WAIT_SECONDS = 0.5
+CANCEL_RPC_TIMEOUT_SECONDS = 2
+CANCEL_RETRY_SECONDS = 2
+CANCEL_MAX_ATTEMPTS = 150  # keep reclaiming the queue slot for up to five minutes
 _active: dict[str, asyncio.Task] = {}
+_cancelling: dict[str, asyncio.Task] = {}
+_finalize_lock: asyncio.Lock | None = None
+_finalize_lock_loop: asyncio.AbstractEventLoop | None = None
+_queue_resume_task: asyncio.Task | None = None
 
 
 class DownloadError(RuntimeError):
@@ -69,6 +83,8 @@ async def start(image_id: str) -> int:
         raise DownloadError(f"image {image_id!r} has no source_url in the catalog")
     if image_id in _active and not _active[image_id].done():
         raise DownloadError(f"{image_id} is already downloading")
+    if image_id in _cancelling and not _cancelling[image_id].done():
+        raise DownloadError(f"{image_id} is still being removed from the download queue; try again shortly")
 
     paths.DOWNLOADS_TMP_DIR.mkdir(parents=True, exist_ok=True)
     out_name = _output_name(image)
@@ -146,6 +162,12 @@ async def start(image_id: str) -> int:
 
 
 async def _watch(image_id: str, download_row_id: int, gid: str, expected_sha256: str | None) -> None:
+    image = repo.get_image(image_id)
+    staged_path = paths.DOWNLOADS_TMP_DIR / (
+        _output_name(image) if image else f"{image_id}.iso"
+    )
+    missing_gid_attempts = 0
+    last_reported: tuple[int, int, str] | None = None
     try:
         while True:
             try:
@@ -157,6 +179,28 @@ async def _watch(image_id: str, download_row_id: int, gid: str, expected_sha256:
                 log.warning("aria2 RPC temporarily unavailable while watching %s", image_id)
                 await asyncio.sleep(2)
                 continue
+            except aria2.Aria2Error as exc:
+                # aria2 can restore a session under a different GID. Treating
+                # the old "GID not found" as a failed download leaves the real
+                # transfer running invisibly and makes it appear to restart.
+                try:
+                    relocated = await _find_remote_state(staged_path)
+                except aria2.Aria2Error:
+                    relocated = None
+                if relocated is None:
+                    missing_gid_attempts += 1
+                    if missing_gid_attempts < GID_RECOVERY_ATTEMPTS:
+                        await asyncio.sleep(GID_RECOVERY_INTERVAL_SECONDS)
+                        continue
+                    raise exc
+                st = relocated
+                new_gid = st.get("gid")
+                if new_gid and new_gid != gid:
+                    gid = new_gid
+                    await asyncio.to_thread(repo.set_download_gid, download_row_id, gid)
+                    log.info("download %s moved to aria2 gid %s", image_id, gid)
+
+            missing_gid_attempts = 0
             completed = int(st.get("completedLength", 0))
             speed = int(st.get("downloadSpeed", 0))
             state = st.get("status")
@@ -173,7 +217,37 @@ async def _watch(image_id: str, download_row_id: int, gid: str, expected_sha256:
                     repo.update_download_progress,
                     download_row_id, progress_bytes=completed, speed_bps=0, state="verifying",
                 )
-                await _finalize(image_id, download_row_id, st, expected_sha256)
+                # Hashing and adapter inspection read most or all of the ISO.
+                # Pause aria2's next queued writer until that storage-heavy
+                # phase is over, otherwise both fight over the same USB stick.
+                async with _get_finalize_lock():
+                    paused = False
+                    try:
+                        await asyncio.wait_for(
+                            aria2.pause_all(), timeout=QUEUE_CONTROL_TIMEOUT_SECONDS
+                        )
+                        paused = True
+                    except (aria2.Aria2Error, asyncio.TimeoutError):
+                        log.warning("could not pause queued downloads while verifying %s", image_id)
+                    try:
+                        await _finalize(image_id, download_row_id, st, expected_sha256)
+                    finally:
+                        if paused:
+                            try:
+                                await asyncio.wait_for(
+                                    aria2.unpause_all(), timeout=QUEUE_CONTROL_TIMEOUT_SECONDS
+                                )
+                            except (aria2.Aria2Error, asyncio.TimeoutError):
+                                log.warning(
+                                    "download queue did not resume immediately after verifying %s; retrying",
+                                    image_id,
+                                )
+                                _schedule_queue_resume()
+                return
+
+            if state == "removed":
+                await asyncio.to_thread(repo.set_image_status, image_id, "not_downloaded")
+                await asyncio.to_thread(repo.finish_download, download_row_id, state="cancelled")
                 return
 
             # sqlite writes go to a worker thread on purpose. db.py sets
@@ -184,11 +258,21 @@ async def _watch(image_id: str, download_row_id: int, gid: str, expected_sha256:
             # per download -- that stalls every request and every other
             # watcher at the same time, which is what "the whole app froze"
             # looked like once a second download was running.
-            await asyncio.to_thread(
-                repo.update_download_progress,
-                download_row_id, progress_bytes=completed, speed_bps=speed,
+            visible_state = "queued" if state in {"waiting", "paused"} else "active"
+            report = (completed, speed, visible_state)
+            # A queued item can sit unchanged for hours. Do not turn that into
+            # one SQLite transaction per item per second on the persistence
+            # partition; write only when something visible actually changed.
+            if report != last_reported:
+                await asyncio.to_thread(
+                    repo.update_download_progress,
+                    download_row_id, progress_bytes=completed, speed_bps=speed,
+                    state=visible_state,
+                )
+                last_reported = report
+            await asyncio.sleep(
+                QUEUED_POLL_INTERVAL_SECONDS if visible_state == "queued" else POLL_INTERVAL_SECONDS
             )
-            await asyncio.sleep(POLL_INTERVAL_SECONDS)
     except asyncio.CancelledError:
         raise
     except Exception as exc:  # noqa: BLE001 - surface to the UI instead of dying silently
@@ -202,6 +286,47 @@ async def _watch(image_id: str, download_row_id: int, gid: str, expected_sha256:
         # that cancel() could no longer find.
         if _active.get(image_id) is asyncio.current_task():
             del _active[image_id]
+
+
+def _get_finalize_lock() -> asyncio.Lock:
+    global _finalize_lock, _finalize_lock_loop
+    loop = asyncio.get_running_loop()
+    if _finalize_lock is None or _finalize_lock_loop is not loop:
+        _finalize_lock = asyncio.Lock()
+        _finalize_lock_loop = loop
+    return _finalize_lock
+
+
+def _schedule_queue_resume() -> None:
+    global _queue_resume_task
+    if _queue_resume_task is None or _queue_resume_task.done():
+        _queue_resume_task = asyncio.create_task(_resume_queue_when_available())
+
+
+async def _resume_queue_when_available() -> None:
+    for _attempt in range(QUEUE_RESUME_MAX_ATTEMPTS):
+        try:
+            await asyncio.wait_for(
+                aria2.unpause_all(), timeout=QUEUE_CONTROL_TIMEOUT_SECONDS
+            )
+            return
+        except (aria2.Aria2Error, asyncio.TimeoutError):
+            await asyncio.sleep(QUEUE_RESUME_RETRY_SECONDS)
+    log.error("could not resume the aria2 download queue after five minutes")
+
+
+async def _find_remote_state(staged_path: Path) -> dict | None:
+    """Find a transfer by its stable path, preferring live work over old results."""
+    active, waiting, stopped = await asyncio.gather(
+        aria2.tell_active(), aria2.tell_waiting(), aria2.tell_stopped()
+    )
+    wanted = str(staged_path)
+    for states in (active, waiting, stopped):
+        for state in states:
+            files = state.get("files") or []
+            if files and files[0].get("path") == wanted:
+                return state
+    return None
 
 
 async def _finalize(image_id: str, download_row_id: int, aria2_status: dict, expected_sha256: str | None) -> None:
@@ -273,28 +398,8 @@ async def cancel(image_id: str) -> None:
     task = _active.pop(image_id, None)
     if task:
         task.cancel()
-        # ...and wait for it to actually be gone. Cancellation is a request,
-        # not an event: an unawaited watcher stays inside its current poll, and
-        # then writes its own terminal state over the "cancelled" one set
-        # below. It is also still holding a finally clause that clears
-        # _active -- so if the user pressed Download again in the meantime, it
-        # would evict the new watcher and leave a running download that nothing
-        # observes and cancel() can no longer stop. That is what made every
-        # download after a cancelled one look dead.
-        await asyncio.wait({task})
-
-    gid = row.get("gid") if row else None
-    if gid:
-        try:
-            await aria2.remove(gid)
-        except Exception:  # noqa: BLE001 - best-effort; it may have already finished/errored
-            pass
-        # aria2 keeps a stopped result for a removed gid, and start() refuses to
-        # re-add a URI while one is on file for the same path.
-        try:
-            await aria2.remove_download_result(gid)
-        except Exception:  # noqa: BLE001
-            pass
+        # Give cancellation a brief chance to settle before updating the row.
+        await asyncio.wait({task}, timeout=CANCEL_WATCHER_WAIT_SECONDS)
 
     # The progress WebSocket only stops on a terminal download state, and the
     # partial file has to go or the next Download adopts it as a resume.
@@ -306,10 +411,89 @@ async def cancel(image_id: str) -> None:
     # cancel, and the next attempt resumed a transfer the user had just stopped.
     out_name = _output_name(image) if image else f"{image_id}.iso"
     staged_path = paths.DOWNLOADS_TMP_DIR / out_name
+    repo.set_image_status(image_id, "not_downloaded", path=None, size_bytes=None)
+
+    # First try synchronously so a normal cancel has reclaimed aria2's sole
+    # queue slot before the response reaches the browser. RPC failure must not
+    # freeze the UI: keep retrying in the background and only delete the
+    # partial after aria2 has stopped writing it.
+    gid = row.get("gid") if row else None
+    if await _stop_remote_download(gid, staged_path):
+        _delete_partial(staged_path)
+        return
+
+    previous = _cancelling.get(image_id)
+    if previous is not None and not previous.done():
+        previous.cancel()
+    retry = asyncio.create_task(_retry_remote_cancel(image_id, gid, staged_path))
+    _cancelling[image_id] = retry
+
+
+def _delete_partial(staged_path: Path) -> None:
     staged_path.unlink(missing_ok=True)
     Path(f"{staged_path}.aria2").unlink(missing_ok=True)
 
-    repo.set_image_status(image_id, "not_downloaded", path=None, size_bytes=None)
+
+async def _rpc_with_cancel_timeout(awaitable):
+    return await asyncio.wait_for(awaitable, timeout=CANCEL_RPC_TIMEOUT_SECONDS)
+
+
+async def _stop_remote_download(gid: str | None, staged_path: Path) -> bool:
+    """Force a running/waiting aria2 item out without blocking the UI.
+
+    A restored aria2 session can assign a different gid, so a failed lookup by
+    the database gid falls back to the stable staged path. Returning False
+    means RPC itself was unreachable and the caller should retry later.
+    """
+    if gid:
+        try:
+            await _rpc_with_cancel_timeout(aria2.remove(gid))
+            try:
+                await _rpc_with_cancel_timeout(aria2.remove_download_result(gid))
+            except Exception:  # noqa: BLE001 - removal already freed the queue slot
+                pass
+            return True
+        except Exception:  # noqa: BLE001 - stale gid or temporarily unavailable RPC
+            pass
+
+    try:
+        active, waiting = await _rpc_with_cancel_timeout(
+            asyncio.gather(aria2.tell_active(), aria2.tell_waiting())
+        )
+    except Exception:  # noqa: BLE001 - the retry worker will ask again
+        return False
+
+    matching_gids = []
+    for state in [*active, *waiting]:
+        files = state.get("files") or []
+        if files and files[0].get("path") == str(staged_path) and state.get("gid"):
+            matching_gids.append(state["gid"])
+
+    for actual_gid in matching_gids:
+        try:
+            await _rpc_with_cancel_timeout(aria2.remove(actual_gid))
+        except Exception:  # noqa: BLE001
+            return False
+        try:
+            await _rpc_with_cancel_timeout(aria2.remove_download_result(actual_gid))
+        except Exception:  # noqa: BLE001 - stopped-result cleanup is cosmetic
+            pass
+    # A successful inventory with no matching item means aria2 has already
+    # stopped it; it is now safe to remove the partial/control files.
+    return True
+
+
+async def _retry_remote_cancel(image_id: str, gid: str | None, staged_path: Path) -> None:
+    try:
+        for _attempt in range(CANCEL_MAX_ATTEMPTS):
+            if await _stop_remote_download(gid, staged_path):
+                _delete_partial(staged_path)
+                return
+            await asyncio.sleep(CANCEL_RETRY_SECONDS)
+        log.error("could not remove cancelled download %s from aria2", image_id)
+    finally:
+        if _cancelling.get(image_id) is asyncio.current_task():
+            del _cancelling[image_id]
 
 
 async def resume_watchers() -> None:
@@ -337,13 +521,21 @@ async def resume_watchers() -> None:
 async def _resume_watchers_when_aria2_answers() -> None:
     for attempt in range(RESUME_MAX_ATTEMPTS):
         try:
-            active, waiting = await asyncio.gather(aria2.tell_active(), aria2.tell_waiting())
+            active, waiting, stopped = await asyncio.gather(
+                aria2.tell_active(), aria2.tell_waiting(), aria2.tell_stopped()
+            )
         except aria2.Aria2Error:
             if attempt == 0:
                 log.info("aria2 RPC not up yet; will keep trying to re-attach download watchers")
             await asyncio.sleep(RESUME_RETRY_SECONDS)
             continue
-        plans = await asyncio.to_thread(_plan_reattach, [*active, *waiting])
+        # Completed/error results matter too: aria2 can finish while the API is
+        # restarting. Ignoring tellStopped left the database at its last value
+        # (often 70-90%) forever even though the transfer had ended.
+        plans, cancellations = await asyncio.to_thread(_plan_reattach, active, waiting, stopped)
+        for image_id, gid, staged_path in cancellations:
+            retry = asyncio.create_task(_retry_remote_cancel(image_id, gid, staged_path))
+            _cancelling[image_id] = retry
         for image_id, row_id, gid, expected_sha256 in plans:
             log.info("resuming download watcher for %s (gid=%s)", image_id, gid)
             _active[image_id] = asyncio.create_task(
@@ -356,7 +548,9 @@ async def _resume_watchers_when_aria2_answers() -> None:
     )
 
 
-def _plan_reattach(states: list[dict]) -> list[tuple[str, int, str, str | None]]:
+def _plan_reattach(
+    active: list[dict], waiting: list[dict], stopped: list[dict],
+) -> tuple[list[tuple[str, int, str, str | None]], list[tuple[str, str | None, Path]]]:
     """Match aria2's live transfers to the rows the UI is still showing.
 
     Returns plans rather than starting the watchers: this runs in a worker
@@ -364,6 +558,10 @@ def _plan_reattach(states: list[dict]) -> list[tuple[str, int, str, str | None]]
     no event loop there to create tasks on.
     """
     plans: list[tuple[str, int, str, str | None]] = []
+    cancellations: list[tuple[str, str | None, Path]] = []
+    # Build stopped results first so a currently active/waiting transfer wins
+    # when an old result exists for the same path or GID.
+    states = [*stopped, *waiting, *active]
     by_gid = {st["gid"]: st for st in states if st.get("gid")}
     by_path: dict[str, dict] = {}
     for st in states:
@@ -371,6 +569,21 @@ def _plan_reattach(states: list[dict]) -> list[tuple[str, int, str, str | None]]
         path = files[0].get("path") if files else None
         if path:
             by_path[path] = st
+
+    # If the API was restarted while aria2 RPC was unavailable, an earlier
+    # Cancel response may already be persisted while the transfer itself is
+    # still alive. Honour that intent before reattaching anything else so the
+    # invisible item cannot occupy the queue forever.
+    for row in repo.cancelled_downloads():
+        image = repo.get_image(row["image_id"])
+        if image is None:
+            continue
+        staged_path = paths.DOWNLOADS_TMP_DIR / _output_name(image)
+        state = _prefer_live_state(
+            by_gid.get(row.get("gid")), by_path.get(str(staged_path))
+        )
+        if state is not None and state.get("status") != "removed":
+            cancellations.append((row["image_id"], state.get("gid"), staged_path))
 
     for row in repo.unfinished_downloads():
         image_id = row["image_id"]
@@ -381,14 +594,24 @@ def _plan_reattach(states: list[dict]) -> list[tuple[str, int, str, str | None]]
         if image is None:
             continue
 
-        state = by_gid.get(row.get("gid"))
+        # aria2 restores unfinished transfers from its session file, and the
+        # gid it hands them back is not guaranteed to be the one we stored.
+        # The staged path is stable across that. It must also beat an old
+        # stopped result still retained under the database GID.
+        state = _prefer_live_state(
+            by_gid.get(row.get("gid")),
+            by_path.get(str(paths.DOWNLOADS_TMP_DIR / _output_name(image))),
+        )
         if state is None:
-            # aria2 restores unfinished transfers from its session file, and the
-            # gid it hands them back is not guaranteed to be the one we stored.
-            # The staged path is stable across that, so match on it instead of
-            # abandoning a download that is running perfectly well.
-            state = by_path.get(str(paths.DOWNLOADS_TMP_DIR / _output_name(image)))
-        if state is None:
+            repo.finish_download(
+                row["id"], state="error", error="download is no longer present in aria2"
+            )
+            repo.set_image_status(image_id, "not_downloaded")
+            continue
+
+        if state.get("status") == "removed":
+            repo.finish_download(row["id"], state="cancelled")
+            repo.set_image_status(image_id, "not_downloaded")
             continue
 
         gid = state["gid"]
@@ -398,4 +621,12 @@ def _plan_reattach(states: list[dict]) -> list[tuple[str, int, str, str | None]]
 
         plans.append((image_id, row["id"], gid, image.get("sha256")))
 
-    return plans
+    return plans, cancellations
+
+
+def _prefer_live_state(exact: dict | None, path_match: dict | None) -> dict | None:
+    terminal = {"complete", "error", "removed"}
+    if path_match is not None and path_match.get("status") not in terminal:
+        if exact is None or exact.get("status") in terminal:
+            return path_match
+    return exact or path_match

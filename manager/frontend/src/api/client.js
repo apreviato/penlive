@@ -121,6 +121,7 @@ export const api = {
     }),
   pendingBoot: () => request('/api/boot/pending'),
   clearPendingBoot: () => request('/api/boot/pending', { method: 'DELETE' }),
+  rebootPending: () => request('/api/boot/reboot', { method: 'POST' }),
 
   startVm: (imageId) =>
     request('/api/vm/start', { method: 'POST', body: JSON.stringify({ image_id: imageId }), ...SLOW }),

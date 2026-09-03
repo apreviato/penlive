@@ -96,6 +96,11 @@ def _connect() -> sqlite3.Connection:
     conn = sqlite3.connect(paths.DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode = WAL")
+    # Progress is disposable telemetry and verified files live separately.
+    # NORMAL avoids forcing the USB persistence layer to flush on every
+    # one-second progress update while WAL still keeps transactions atomic.
+    conn.execute("PRAGMA synchronous = NORMAL")
+    conn.execute("PRAGMA temp_store = MEMORY")
     conn.execute("PRAGMA busy_timeout = 30000")
     conn.execute("PRAGMA foreign_keys = ON")
     with _schema_lock:

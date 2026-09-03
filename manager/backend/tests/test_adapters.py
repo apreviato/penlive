@@ -73,6 +73,7 @@ def test_prepare_debian_uses_findiso(tmp_path):
     _, cfg = prepare_boot(iso_path, tmp_path / "ex", "images/debian.iso")
     assert "boot=live" in cfg.cmdline
     assert "findiso=/images/debian.iso" in cfg.cmdline
+    assert "live-media=/dev/disk/by-label/PENDATA" in cfg.cmdline
 
 
 def test_prepare_generic_produces_chainload_without_extracting(tmp_path):

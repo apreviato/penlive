@@ -86,6 +86,10 @@ keep_kiosk_in_front() {
 # answers, so boot never exposes a white browser surface or an error page.
 while true; do
     wait_for_window_manager
+    # Openbox may repaint the root window while it initializes. Set it again
+    # after the WM is ready so the brief surface exposed during shutdown is
+    # black rather than the default X grey weave.
+    command -v xsetroot >/dev/null 2>&1 && xsetroot -solid '#050607' || true
 
     # A profile left locked by a killed Chromium makes the next launch hand its
     # URL to a process that no longer draws anything and exit 0 straight away,
