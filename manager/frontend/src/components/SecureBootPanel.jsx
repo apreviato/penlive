@@ -10,6 +10,11 @@ import { api } from '../api/client.js';
  * through Debian's shim. Enrolling a machine owner key lets PenLive counter-sign
  * those kernels.
  *
+ * Nothing here is a prerequisite for booting a downloaded system: pressing Boot
+ * creates and queues the key on its own. This panel is the status readout, and
+ * the place to come back to for the code MokManager asks for - that prompt
+ * appears before PenLive is running, so there is nowhere else to read it.
+ *
  * Enrolment finishes at the MokManager screen on the next boot, which cannot be
  * automated - that physical-presence step is the point of the mechanism - so
  * the job here is to make the instructions impossible to misread.
@@ -86,13 +91,26 @@ export default function SecureBootPanel() {
       )}
 
       {!state.key_enrolled && state.key_pending && (
-        <div className="sb-row">
-          <span className="badge badge-sb-warn">Awaiting reboot</span>
-          <span>
-            A key is queued. Reboot and complete enrolment at the blue MokManager
-            screen to finish.
-          </span>
-        </div>
+        <>
+          <div className="sb-row">
+            <span className="badge badge-sb-warn">Awaiting reboot</span>
+            <span>
+              A key is queued. Reboot and complete enrolment at the blue MokManager
+              screen to finish.
+            </span>
+          </div>
+          {state.enrolment_password && !enrolment && (
+            <div className="sb-enrolment">
+              <p>Finish it at the blue screen on the next restart:</p>
+              <ol className="sb-steps">
+                {(state.enrolment_steps || []).map((step) => (
+                  <li key={step}>{step}</li>
+                ))}
+              </ol>
+              <div className="sb-password">{state.enrolment_password}</div>
+            </div>
+          )}
+        </>
       )}
 
       {!state.key_enrolled && !state.key_pending && (
@@ -105,12 +123,14 @@ export default function SecureBootPanel() {
             </span>
           </div>
           <p className="muted">
-            Enrolling a key for this machine lets PenLive counter-sign those kernels.
-            It takes one reboot and a short confirmation at the firmware screen. The
+            You do not have to do anything here: the first time you press Boot on a
+            downloaded system, PenLive creates a key for this machine, signs that
+            system&apos;s kernel with it and tells you the code to type at the firmware
+            screen. Enrol it now if you would rather get that step out of the way. The
             alternative is turning Secure Boot off in your firmware setup.
           </p>
           <button className="btn" onClick={enrol} disabled={busy || !state.tools_available}>
-            {busy ? 'Preparing…' : 'Enrol a key for this machine'}
+            {busy ? 'Preparing…' : 'Enrol a key now'}
           </button>
           {!state.tools_available && (
             <p className="muted">Signing tools are unavailable on this system.</p>
@@ -121,19 +141,18 @@ export default function SecureBootPanel() {
       {enrolment && (
         <div className="sb-enrolment">
           <p>
-            <strong>Reboot to finish.</strong> A blue screen appears before PenLive
-            starts. Its password prompt runs before any keyboard layout is loaded,
-            which is why this code is digits only.
+            <strong>Reboot to finish.</strong> Its password prompt runs before any
+            keyboard layout is loaded, which is why this code is digits only.
           </p>
-          <div className="sb-password">{enrolment.password}</div>
           <ol className="sb-steps">
-            {enrolment.instructions.map((line) => (
-              <li key={line}>{line}</li>
+            {(enrolment.steps || []).map((step) => (
+              <li key={step}>{step}</li>
             ))}
           </ol>
+          <div className="sb-password">{enrolment.password}</div>
           <p className="muted">
-            Write the code down first — it is not shown again, and the prompt appears
-            before PenLive is running.
+            The prompt appears before PenLive is running, so write the code down — it
+            stays on this panel until the key is enrolled if you need it again.
           </p>
         </div>
       )}

@@ -120,11 +120,16 @@ export const api = {
       ...SLOW,
     }),
   pendingBoot: () => request('/api/boot/pending'),
-  clearPendingBoot: () => request('/api/boot/pending', { method: 'DELETE' }),
-  rebootPending: () => request('/api/boot/reboot', { method: 'POST' }),
+  // SLOW: the daemon answers as soon as the boot entry is armed, but it
+  // handles one request at a time and may be part-way through another.
+  rebootPending: () => request('/api/boot/reboot', { method: 'POST', ...SLOW }),
 
-  startVm: (imageId) =>
-    request('/api/vm/start', { method: 'POST', body: JSON.stringify({ image_id: imageId }), ...SLOW }),
+  startVm: (imageId, { resume = false } = {}) =>
+    request('/api/vm/start', {
+      method: 'POST',
+      body: JSON.stringify({ image_id: imageId, resume }),
+      ...SLOW,
+    }),
   attachVmDisk: (imageId, device, confirmation) =>
     request(`/api/vm/${imageId}/physical-disk`, {
       method: 'POST',
@@ -133,6 +138,11 @@ export const api = {
     }),
   stopVm: (imageId) => request(`/api/vm/${imageId}/stop`, { method: 'POST' }),
   vmStatus: (imageId) => request(`/api/vm/${imageId}/status`),
+  // Saved VM sessions: a frozen guest that resumes where it was left.
+  vmSessions: () => request('/api/vm/sessions'),
+  vmSession: (imageId) => request(`/api/vm/sessions/${imageId}`),
+  saveVmSession: (imageId) => request(`/api/vm/${imageId}/save-session`, { method: 'POST' }),
+  deleteVmSession: (imageId) => request(`/api/vm/sessions/${imageId}`, { method: 'DELETE' }),
   mountImage: (imageId) => request(`/api/mount/${imageId}`, { method: 'POST', ...SLOW }),
   unmountImage: (imageId) => request(`/api/mount/${imageId}`, { method: 'DELETE', ...SLOW }),
 
@@ -149,8 +159,8 @@ export const api = {
   cancelJob: (id) => request(`/api/jobs/${id}/cancel`, { method: 'POST' }),
 
   // power
-  reboot: () => request('/api/power/reboot', { method: 'POST' }),
-  poweroff: () => request('/api/power/poweroff', { method: 'POST' }),
+  reboot: () => request('/api/power/reboot', { method: 'POST', ...SLOW }),
+  poweroff: () => request('/api/power/poweroff', { method: 'POST', ...SLOW }),
 };
 
 function socket(path, onMessage) {

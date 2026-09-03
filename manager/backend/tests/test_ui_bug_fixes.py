@@ -195,7 +195,7 @@ def test_windows_fast_startup_gets_an_actionable_message():
 
 # ---- boot reported as failed after it was scheduled -------------------------
 
-def test_boot_attempt_reset_reports_instead_of_raising(tmp_path, monkeypatch):
+def test_one_shot_update_reports_instead_of_raising(tmp_path, monkeypatch):
     """grub-editenv missing used to fail the whole write_nextboot call, telling
     the user the boot had not been scheduled when the menuentry was on disk."""
     import subprocess
@@ -203,22 +203,25 @@ def test_boot_attempt_reset_reports_instead_of_raising(tmp_path, monkeypatch):
     from app.daemon import server
 
     bootenv = tmp_path / "bootenv"
-    bootenv.write_text("boot_attempts=2\n", encoding="utf-8")
+    bootenv.write_text("next_entry=\n", encoding="utf-8")
     monkeypatch.setattr(paths, "BOOTENV", bootenv)
 
     def missing(*_args, **_kwargs):
         raise FileNotFoundError("grub-editenv")
 
     monkeypatch.setattr(subprocess, "run", missing)
-    warning = server._reset_boot_attempts()
+    warning = server._set_next_entry("pending_boot")
     assert warning and "grub-editenv" in warning
 
 
-def test_boot_attempt_reset_is_silent_when_there_is_no_bootenv(tmp_path, monkeypatch):
+def test_clearing_the_one_shot_is_silent_when_there_is_no_bootenv(tmp_path, monkeypatch):
+    """No environment block means nothing is armed, which is the state the
+    caller wanted. Creating one just to write an empty value into it would
+    turn a no-op into a write on a partition that may be read-only."""
     from app.daemon import server
 
     monkeypatch.setattr(paths, "BOOTENV", tmp_path / "absent")
-    assert server._reset_boot_attempts() is None
+    assert server._set_next_entry("") is None
 
 
 @pytest.mark.asyncio
@@ -248,7 +251,7 @@ async def test_write_nextboot_remounts_read_only_pensys_and_retries(tmp_path, mo
     monkeypatch.setattr(paths, "NEXTBOOT_CFG", state / "nextboot.cfg")
     monkeypatch.setattr(paths, "NEXTBOOT_JSON", state / "nextboot.json")
     monkeypatch.setattr(server, "_require_pensys_mount", lambda: None)
-    monkeypatch.setattr(server, "_reset_boot_attempts", lambda **_kwargs: None)
+    monkeypatch.setattr(server, "_set_next_entry", lambda _value: None)
     monkeypatch.setattr(server, "_fsync_directory", lambda _path: None)
     attempts = {"writes": 0, "remounts": 0}
     real_publish = server._publish_nextboot
@@ -327,9 +330,7 @@ async def test_write_nextboot_durably_arms_grub_one_shot(tmp_path, monkeypatch):
 
     assert result == {"warning": None}
     assert paths.NEXTBOOT_CFG.read_text() == "menuentry test {}\n"
-    assert calls == [[
-        "grub-editenv", str(bootenv), "set", "boot_attempts=0", "next_entry=pending_boot",
-    ]]
+    assert calls == [["grub-editenv", str(bootenv), "set", "next_entry=pending_boot"]]
 
 
 @pytest.mark.asyncio
@@ -358,11 +359,22 @@ async def test_write_nextboot_repairs_a_missing_bootenv(tmp_path, monkeypatch):
     assert result == {"warning": None}
     assert paths.BOOTENV.exists()
     assert calls[0][-1] == "create"
-    assert calls[1][-2:] == ["boot_attempts=0", "next_entry=pending_boot"]
+    assert calls[1][-1] == "next_entry=pending_boot"
 
 
 @pytest.mark.asyncio
-async def test_reboot_rearms_pending_entry_and_does_not_wait_for_systemd(tmp_path, monkeypatch):
+async def test_reboot_arms_the_entry_and_answers_before_taking_the_machine_down(
+    tmp_path, monkeypatch
+):
+    """The reply is the promise that the machine is going down; the flushing
+    that makes it true happens after it.
+
+    Syncing PENDATA - exFAT on a USB stick, holding whatever a download left
+    dirty - can take far longer than the UI's request timeout. Holding the
+    reply open for it made the Restarting screen give up, drop the user back
+    into the app, and then reboot underneath them a minute later.
+    """
+    import asyncio
     import subprocess
 
     from app.daemon import server
@@ -375,6 +387,50 @@ async def test_reboot_rearms_pending_entry_and_does_not_wait_for_systemd(tmp_pat
     nextboot.write_text("menuentry test {}\n")
     monkeypatch.setattr(paths, "BOOTENV", bootenv)
     monkeypatch.setattr(paths, "NEXTBOOT_CFG", nextboot)
+    monkeypatch.setattr(server, "_POWER_SETTLE_SECONDS", 0)
+    monkeypatch.setattr(server, "_power_task", None)
+    slow = []
+
+    def flush_slowly():
+        slow.append("flushed")
+
+    monkeypatch.setattr(server, "_flush_penlive_storage", flush_slowly)
+    monkeypatch.setattr(server, "_release_penlive_mounts", lambda: None)
+    calls = []
+
+    def run(argv, **_kwargs):
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(server.subprocess, "run", run)
+
+    assert await server.handle_reboot({}) == {"rebooting": True}
+
+    # Answered with the entry armed and PENSYS - the small partition the
+    # restart actually depends on - already on disk.
+    assert calls[0] == ["grub-editenv", str(bootenv), "set", "next_entry=pending_boot"]
+    assert calls[1][:2] == ["sync", "-f"]
+    assert str(paths.DATA_MOUNT) not in calls[1]
+    assert not any(argv[0] == "systemctl" for argv in calls), "must not block on systemd"
+    assert slow == []
+
+    await server._power_task
+
+    assert slow == ["flushed"]
+    assert calls[-1] == ["systemctl", "--no-block", "reboot"]
+
+
+@pytest.mark.asyncio
+async def test_a_second_power_request_does_not_start_a_second_shutdown(tmp_path, monkeypatch):
+    """A double-click on Restart must not queue two teardowns racing each other
+    through the same unmounts."""
+    import subprocess
+
+    from app.daemon import server
+
+    monkeypatch.setattr(paths, "NEXTBOOT_CFG", tmp_path / "absent.cfg")
+    monkeypatch.setattr(server, "_POWER_SETTLE_SECONDS", 0)
+    monkeypatch.setattr(server, "_power_task", None)
     monkeypatch.setattr(server, "_flush_penlive_storage", lambda: None)
     monkeypatch.setattr(server, "_release_penlive_mounts", lambda: None)
     calls = []
@@ -386,9 +442,14 @@ async def test_reboot_rearms_pending_entry_and_does_not_wait_for_systemd(tmp_pat
     monkeypatch.setattr(server.subprocess, "run", run)
 
     await server.handle_reboot({})
+    first = server._power_task
+    await server.handle_reboot({})
 
-    assert calls[0] == ["grub-editenv", str(bootenv), "set", "next_entry=pending_boot"]
-    assert calls[1] == ["systemctl", "--no-block", "reboot"]
+    assert server._power_task is first
+    await first
+    assert [argv for argv in calls if argv[0] == "systemctl"] == [
+        ["systemctl", "--no-block", "reboot"]
+    ]
 
 
 # ---- read-only PENSYS: "[Errno 30] ... /boot/extracted" ----------------------
@@ -466,25 +527,25 @@ async def test_unrelated_oserror_is_not_treated_as_a_storage_fault(tmp_path, mon
         )
 
 
-def test_unwritable_boot_partition_does_not_condemn_the_image(tmp_path, monkeypatch, temp_db):
+def test_an_unreadable_iso_does_not_condemn_the_image(tmp_path, monkeypatch, temp_db):
     """The rescan used to mark a perfectly good ISO "invalid" when the only
-    problem was that /boot had gone read-only."""
+    problem was a storage fault it could do nothing about."""
     from app.services import inspector
 
     repo.upsert_image_from_catalog(CATALOG_ENTRY)
 
-    def read_only(*_args, **_kwargs):
-        raise OSError(30, "Read-only file system", "/boot/extracted")
+    def unreadable(*_args, **_kwargs):
+        raise OSError(5, "Input/output error", "debian.iso")
 
-    monkeypatch.setattr(inspector, "prepare_boot", read_only)
+    monkeypatch.setattr(inspector, "detect_adapter", unreadable)
     monkeypatch.setattr(paths, "EXTRACTED_DIR", tmp_path / "extracted")
 
     inspector.process_downloaded_image("debian-13-live-standard", tmp_path / "debian.iso")
 
     image = repo.get_image("debian-13-live-standard")
     assert image["status"] == "downloaded"
-    assert "could not extract boot files" in image["inspection_error"]
-    # nativeBoot must survive, or Boot (and its remount retry) becomes unreachable.
+    assert "could not inspect this image" in image["inspection_error"]
+    # nativeBoot must survive, or Boot (and its own recovery) becomes unreachable.
     assert image["capabilities"]["nativeBoot"] is True
 
 

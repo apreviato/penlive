@@ -12,6 +12,7 @@ from isofactory import (
     DEBIAN_LIVE_WITH_INSTALLER_FILES,
     FEDORA_FILES,
     FEDORA_LIVE_FILES,
+    FEDORA_LIVE_ISOLINUX_FILES,
     GENERIC_EFI_FILES,
     PROXMOX_FILES,
     UBUNTU_FILES,
@@ -232,3 +233,40 @@ def test_iso_image_reads_udf_paths(tmp_path):
         assert iso.file_size("/sources/boot.wim") == len(b"fake-boot-wim")
         # Callers should not have to know that Microsoft writes them lowercase.
         assert iso.exists("/EFI/Boot/bootx64.efi")
+
+
+def test_a_fedora_live_image_with_only_isolinux_is_still_fedora(tmp_path):
+    """Several Fedora spins ship the kernel under /isolinux and nowhere else.
+    Missing that layout did not fail loudly - it dropped the image to the
+    generic chainloader, which boots it off the exFAT data partition and dies
+    in GRUB with an error about exfat.mod that never mentions Fedora."""
+    from isofactory import FEDORA_LIVE_ISOLINUX_FILES
+
+    iso = build_iso(
+        tmp_path / "fedora-spin.iso", FEDORA_LIVE_ISOLINUX_FILES,
+        volume_identifier="Fedora-KDE-44",
+    )
+
+    adapter = detect_adapter(iso)
+    assert adapter.family == "fedora"
+
+    _adapter, cfg = prepare_boot(iso, tmp_path / "extract", "images/fedora-spin.iso")
+    assert cfg.method == "linux"
+    assert cfg.kernel == "vmlinuz"
+    assert "root=live:CDLABEL=Fedora-KDE-44" in cfg.cmdline
+
+
+def test_a_live_layout_outranks_the_bare_installer_one(tmp_path):
+    """Both score above the generic chainloader; the Live image is the more
+    specific match and the one whose cmdline this adapter has to get right."""
+    from app.adapters.fedora import FedoraAdapter
+
+    installer = build_iso(tmp_path / "server.iso", FEDORA_FILES)
+    live = build_iso(tmp_path / "live.iso", FEDORA_LIVE_FILES)
+
+    with IsoImage(installer) as image:
+        installer_score = FedoraAdapter().detect(image)
+    with IsoImage(live) as image:
+        live_score = FedoraAdapter().detect(image)
+
+    assert 0 < installer_score < live_score

@@ -37,6 +37,12 @@ MOK_DER = MOK_DIR / "penlive.der"
 
 MOK_SUBJECT = "/CN=PenLive machine owner key/"
 
+# Settings key holding the digits MokManager will ask for. It is kept because
+# that prompt appears before PenLive is running: a user who did not write the
+# code down has nowhere else to read it, and generating a second one would queue
+# a second enrolment request.
+ENROLMENT_PASSWORD_SETTING = "secureboot_enrolment_password"
+
 
 def is_enabled() -> bool:
     """True when the firmware booted us with Secure Boot active."""
@@ -102,6 +108,27 @@ def state() -> dict:
         "can_boot_downloaded": (not enabled) or enrolled,
         "needs_enrolment": enabled and not enrolled,
     }
+
+
+def enrolment_steps() -> list[str]:
+    """The MokManager screens, in the order they appear.
+
+    Written as the things that will be on the screen rather than as a
+    description of them. This is read once, in front of a firmware menu that
+    looks nothing like the rest of the machine, by someone who cannot go back
+    and check - so every screen gets a line, including the last one, which is
+    the step people miss: after the code is accepted MokManager returns to its
+    menu and waits, and a machine left sitting there has enrolled nothing.
+    """
+    return [
+        "Restart. A blue screen appears before PenLive - if it counts down and asks for a "
+        "key press, press any key.",
+        'Choose "Enroll MOK".',
+        'Choose "Continue".',
+        'Choose "Yes" to confirm.',
+        "Type the code below. Nothing appears on screen while you type it.",
+        'Choose "Reboot" - the system you picked starts on the way back up.',
+    ]
 
 
 def generate_enrolment_password() -> str:

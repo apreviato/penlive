@@ -21,6 +21,18 @@ log = logging.getLogger("penlive.blockdev")
 PENLIVE_LABELS = {"PENEFI", "PENSYS", "PENDATA", "persistence"}
 
 
+def _flag(value: Any) -> bool:
+    """lsblk only emits real JSON booleans for RM/RO from util-linux 2.38 on.
+
+    Before that they are the strings "0" and "1", and bool("0") is True - which
+    marks every drive removable and read-only, and the VM drive picker filters
+    read-only drives out, so it would offer nothing at all.
+    """
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
 async def inventory() -> dict[str, list[dict[str, Any]]]:
     """Returns {"disks": [...], "partitions": [...]} with PenLive members flagged."""
     try:
@@ -52,8 +64,8 @@ async def inventory() -> dict[str, list[dict[str, Any]]]:
             "mountpoint": node.get("mountpoint"),
             "model": (node.get("model") or "").strip() or None,
             "transport": node.get("tran"),
-            "removable": bool(node.get("rm")),
-            "readonly": bool(node.get("ro")),
+            "removable": _flag(node.get("rm")),
+            "readonly": _flag(node.get("ro")),
             "type": node.get("type"),
             "parent": parent_path,
         }

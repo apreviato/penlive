@@ -40,8 +40,23 @@ async def write_usb(body: WriteUsbRequest):
 
 @router.get("/secureboot")
 def secure_boot_state():
-    """What Secure Boot allows right now, and whether anything must be enrolled."""
-    return secureboot.state()
+    """What Secure Boot allows right now, and whether anything must be enrolled.
+
+    Enrolment is started automatically the first time a system is scheduled for
+    boot (see routers/boot.py), so this panel is mostly a status readout. The
+    password is included because MokManager asks for it at a screen that appears
+    before PenLive: a user who did not write it down needs to be able to come
+    back and look at it.
+    """
+    state = secureboot.state()
+    state["enrolment_password"] = (
+        repo.get_setting(secureboot.ENROLMENT_PASSWORD_SETTING) if state["key_pending"] else None
+    )
+    # Served rather than repeated in the frontend: the same six screens are
+    # described by the boot flow and by this panel, and two copies of them
+    # would drift apart with nothing to catch it.
+    state["enrolment_steps"] = secureboot.enrolment_steps()
+    return state
 
 
 @router.post("/secureboot/enrol")
@@ -65,14 +80,12 @@ async def enrol_secure_boot_key():
         raise HTTPException(503, str(exc))
     except RuntimeError as exc:
         raise HTTPException(500, str(exc))
+    repo.set_setting(secureboot.ENROLMENT_PASSWORD_SETTING, password)
 
     return {
         "pending": True,
         "password": password,
-        "instructions": [
-            "Reboot now.",
-            "A blue screen appears before PenLive starts: choose 'Enroll MOK'.",
-            "Select 'Continue', then 'Yes' to confirm.",
-            f"Type the password {password} when asked, then reboot.",
-        ],
+        # One list, shared with the boot flow: the screens are the same, and
+        # two descriptions of them would drift apart.
+        "steps": secureboot.enrolment_steps(),
     }

@@ -76,8 +76,45 @@ def test_embedded_config_targets_the_pensys_label():
     later without rebuilding it, so the label it searches for must match the
     one the builder writes."""
     assert "--label PENSYS" in grubinstall.EMBEDDED_CFG
-    assert "set prefix=($root)/boot/grub" in grubinstall.EMBEDDED_CFG
     assert "configfile" in grubinstall.EMBEDDED_CFG
+
+
+def test_the_stub_leaves_the_module_prefix_alone():
+    """A signed GRUB loads modules it lacks from $prefix on the ESP. Repointing
+    prefix at PENSYS before grub.cfg has run its insmods takes that away, and
+    grub.cfg pins prefix itself once the modules are in."""
+    assert "set prefix" not in grubinstall.EMBEDDED_CFG
+
+
+def test_pensys_layout_matches_the_mounted_view():
+    """PENSYS is mounted on /boot, so a `boot/` level on the partition would put
+    every file the manager writes one directory away from where GRUB reads it -
+    which is exactly how a scheduled ISO ends up missing from the menu."""
+    assert "($root)/grub/grub.cfg" in grubinstall.EMBEDDED_CFG
+    assert "/boot/grub" not in grubinstall.EMBEDDED_CFG
+
+
+def test_bootsys_files_land_at_the_partition_root(tmp_path):
+    from penlive.runner import CommandRunner
+
+    runner = CommandRunner(dry_run=True)
+    grub_cfg = tmp_path / "grub.cfg"
+    recovery_cfg = tmp_path / "recovery.cfg"
+    wimboot = tmp_path / "wimboot"
+    for f in (grub_cfg, recovery_cfg, wimboot):
+        f.write_text("x")
+
+    mount = tmp_path / "bootsys"
+    grubinstall.install_bootsys_files(
+        runner, mount, grub_cfg=grub_cfg, recovery_cfg=recovery_cfg, wimboot=wimboot
+    )
+    history = " ".join(runner.history)
+
+    for expected in ("grub", "state", "extracted"):
+        assert str(mount / expected) in history
+        assert str(mount / "boot" / expected) not in history
+    assert str(mount / "wimboot") in history
+    assert "next_entry=" in history
 
 
 # --- Secure Boot chain -------------------------------------------------------
@@ -151,3 +188,34 @@ def test_stub_config_goes_to_the_prefix_debian_grub_was_signed_with(tmp_path, mo
 
 def test_signed_prefix_matches_the_stub_location():
     assert grubinstall.SIGNED_GRUB_PREFIX == "EFI/debian"
+
+
+def test_grub_modules_are_installed_next_to_the_config(tmp_path):
+    """Debian's signed grubx64.efi has a fixed built-in module set that does not
+    include exfat, and loads anything else from $prefix/x86_64-efi. Without a
+    module tree there, the chainload boot method dies at `insmod exfat` and then
+    cannot find PENDATA at all."""
+    from penlive.runner import CommandRunner
+
+    source = tmp_path / "modules"
+    source.mkdir()
+    for name in ("exfat.mod", "iso9660.mod", "moddep.lst", "README"):
+        (source / name).write_bytes(b"x")
+
+    target = tmp_path / "bootsys" / "grub"
+    runner = CommandRunner(dry_run=False)
+    installed = grubinstall.install_grub_modules(runner, target, source)
+
+    assert set(installed) == {"exfat.mod", "iso9660.mod", "moddep.lst"}
+    assert (target / "x86_64-efi" / "exfat.mod").is_file()
+    # Only GRUB's own files: anything else in that directory is not ours to copy.
+    assert not (target / "x86_64-efi" / "README").exists()
+
+
+def test_a_host_without_a_module_tree_is_not_a_build_failure(tmp_path):
+    """A build host that only has the signed packages can still produce a stick;
+    it just cannot offer the chainload method with Secure Boot off."""
+    from penlive.runner import CommandRunner
+
+    runner = CommandRunner(dry_run=False)
+    assert grubinstall.install_grub_modules(runner, tmp_path / "grub", tmp_path / "absent") == []

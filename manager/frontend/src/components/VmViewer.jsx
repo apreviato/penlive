@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import RFB from '@novnc/novnc';
 import { api } from '../api/client.js';
 import { formatBytes } from '../format.js';
+import VmSessions from './VmSessions.jsx';
 
 // QEMU can drop the first connection while it is still setting the display up,
 // so a single failure is not yet a reason to tell the user anything is wrong.
@@ -10,12 +11,15 @@ const RETRY_DELAY_MS = 800;
 
 function VmStatus({ status }) {
   const connected = status === 'connected';
+  // 'restoring' deliberately reads as waiting, not as connected: the display
+  // answers long before the guest inside it does.
   const label = status.startsWith('reconnecting')
     ? status.replace('reconnecting', 'Reconnecting')
     : {
         connecting: 'Connecting…',
         connected: 'Connected',
         disconnected: 'Disconnected',
+        restoring: 'Restoring session…',
       }[status] || status;
 
   return (
@@ -36,7 +40,9 @@ function describeDisk(disk) {
     .join(' · ');
 }
 
-export default function VmViewer({ session, onSessionChanged, onClosed }) {
+export default function VmViewer({
+  session, sessions = [], saving = [], onSessionChanged, onClosed, onSessionsChanged,
+}) {
   const screenRef = useRef(null);
   const [status, setStatus] = useState('connecting');
   const [error, setError] = useState(null);
@@ -48,6 +54,11 @@ export default function VmViewer({ session, onSessionChanged, onClosed }) {
   const [diskLoading, setDiskLoading] = useState(false);
   const [diskBusy, setDiskBusy] = useState(false);
   const [diskError, setDiskError] = useState(null);
+  const [sessionBusy, setSessionBusy] = useState(null);
+  const [restoring, setRestoring] = useState(false);
+  // Read inside the noVNC callbacks, which capture their closure once.
+  const restoringRef = useRef(false);
+  restoringRef.current = restoring;
 
   useEffect(() => {
     if (!session || !screenRef.current) return undefined;
@@ -60,7 +71,9 @@ export default function VmViewer({ session, onSessionChanged, onClosed }) {
     const connect = () => {
       if (cancelled) return;
       attempt += 1;
-      setStatus(attempt === 1 ? 'connecting' : `reconnecting (${attempt}/${MAX_ATTEMPTS})`);
+      if (!restoringRef.current) {
+        setStatus(attempt === 1 ? 'connecting' : `reconnecting (${attempt}/${MAX_ATTEMPTS})`);
+      }
       const host = window.location.hostname || '127.0.0.1';
       rfb = new RFB(screenRef.current, `ws://${host}:${session.websocket_port}`);
       rfb.scaleViewport = true;
@@ -78,7 +91,11 @@ export default function VmViewer({ session, onSessionChanged, onClosed }) {
           setStatus('disconnected');
           return;
         }
-        if (attempt < MAX_ATTEMPTS) {
+        // While a saved session is still being read back, QEMU is busy with
+        // the stream and can drop a connection or two. Giving up after five
+        // tries and announcing "the virtual machine stopped" would be wrong
+        // about a machine that is in the middle of coming back.
+        if (attempt < MAX_ATTEMPTS || restoringRef.current) {
           retryTimer = setTimeout(connect, RETRY_DELAY_MS);
           return;
         }
@@ -109,6 +126,42 @@ export default function VmViewer({ session, onSessionChanged, onClosed }) {
     };
   }, [session]);
 
+  // A resumed guest is loaded in the background: the display is up long before
+  // the machine is, and without this the user watches a frozen frame with no
+  // way to tell it apart from a resume that failed.
+  const startedRestoring = Boolean(session?.restoring);
+  useEffect(() => {
+    if (!startedRestoring) {
+      setRestoring(false);
+      return undefined;
+    }
+    setRestoring(true);
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const state = await api.vmStatus(session.image.id);
+        if (cancelled) return;
+        if (state.restore_error) {
+          setError(`Could not resume the saved session: ${state.restore_error}`);
+          setRestoring(false);
+          clearInterval(id);
+        } else if (!state.restoring) {
+          setRestoring(false);
+          clearInterval(id);
+          onSessionsChanged?.();
+        }
+      } catch {
+        // A failed poll says nothing; the next one will.
+      }
+    };
+    const id = setInterval(poll, 1500);
+    poll();
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [startedRestoring, session, onSessionsChanged]);
+
   useEffect(() => {
     if (!fullscreen) return undefined;
     const leaveFullscreen = (event) => {
@@ -138,6 +191,56 @@ export default function VmViewer({ session, onSessionChanged, onClosed }) {
     }
     onClosed();
   }, [session, onClosed]);
+
+  const saveSession = useCallback(async () => {
+    setSessionBusy(session.image.id);
+    try {
+      await api.saveVmSession(session.image.id);
+    } catch (err) {
+      setError(err.message);
+      setSessionBusy(null);
+      return;
+    }
+    // The VM is on its way down as its memory is written out. Hand the tab back
+    // to the session list, where the write reports its own progress.
+    onClosed({ stay: true });
+  }, [session, onClosed]);
+
+  const resumeSession = useCallback(
+    async (saved) => {
+      setSessionBusy(saved.image_id);
+      setError(null);
+      try {
+        const started = await api.startVm(saved.image_id, { resume: true });
+        onSessionChanged({
+          ...started,
+          image: { id: saved.image_id, name: saved.image_name || saved.image_id },
+        });
+      } catch (err) {
+        setError(err.message);
+      } finally {
+        setSessionBusy(null);
+        onSessionsChanged?.();
+      }
+    },
+    [onSessionChanged, onSessionsChanged]
+  );
+
+  const deleteSession = useCallback(
+    async (saved) => {
+      setSessionBusy(saved.image_id);
+      setError(null);
+      try {
+        await api.deleteVmSession(saved.image_id);
+      } catch (err) {
+        setError(err.message);
+      } finally {
+        setSessionBusy(null);
+        onSessionsChanged?.();
+      }
+    },
+    [onSessionsChanged]
+  );
 
   const openDiskDialog = useCallback(async () => {
     setFullscreen(false);
@@ -179,18 +282,50 @@ export default function VmViewer({ session, onSessionChanged, onClosed }) {
   }, [session, selectedDisk, diskConfirmation, onSessionChanged]);
 
   if (!session) {
+    // "No virtual machine is running" is only worth saying when that is the
+    // whole story. With a session on the drive — or one being written right
+    // now — it is a true sentence about the wrong thing, sitting above the
+    // list the user actually came here for.
+    const nothingToShow = sessions.length === 0 && saving.length === 0;
     return (
       <div className="content">
-        <div className="empty">
-          <h2>No virtual machine is running</h2>
-          <p>
-            Choose Run VM on a downloaded system. The VM has no access to this computer’s
-            physical drives, and its temporary changes are discarded when it stops.
-          </p>
+        {error && (
+          <div className="banner banner-error">
+            <span>{error}</span>
+            <button className="btn btn-sm" onClick={() => setError(null)}>Dismiss</button>
+          </div>
+        )}
+        {nothingToShow && (
+          <div className="empty">
+            <h2>No virtual machine is running</h2>
+            <p>
+              Choose Run VM on a downloaded system. The VM has no access to this computer’s
+              physical drives, and its temporary changes are discarded when it stops — unless you
+              save the session first.
+            </p>
+          </div>
+        )}
+
+        <div className="section-header">
+          <h2 className="section-title">Saved sessions</h2>
         </div>
+        <p className="section-copy">
+          A saved session holds the whole machine — its memory, its open programs — on the PenLive
+          drive. Resuming picks it up mid-sentence, even after this computer has been restarted.
+          Resuming uses the session up; save again to keep it.
+        </p>
+        <VmSessions
+          sessions={sessions}
+          saving={saving}
+          busyId={sessionBusy}
+          onResume={resumeSession}
+          onDelete={deleteSession}
+        />
       </div>
     );
   }
+
+  const savingThis = saving.find((entry) => entry.image_id === session.image.id);
 
   return (
     <div className="content vm-page">
@@ -202,12 +337,29 @@ export default function VmViewer({ session, onSessionChanged, onClosed }) {
           </p>
         </div>
         <div className="button-row vm-actions">
-          <VmStatus status={status} />
+          <VmStatus status={restoring ? 'restoring' : status} />
           <button className="btn" onClick={openDiskDialog} disabled={Boolean(session.physical_disk)}>
             {session.physical_disk ? 'Drive access enabled' : 'Enable drive access'}
           </button>
           <button className="btn" onClick={() => setFullscreen(true)}>
             Full screen
+          </button>
+          <button
+            className="btn btn-primary"
+            onClick={saveSession}
+            disabled={
+              Boolean(session.physical_disk) ||
+              Boolean(savingThis) ||
+              restoring ||
+              sessionBusy !== null
+            }
+            title={
+              session.physical_disk
+                ? 'A session with direct drive access cannot be frozen: the drive can change while it sleeps.'
+                : 'Write this machine to the PenLive drive and shut it down, to resume later'
+            }
+          >
+            {sessionBusy === session.image.id ? <span className="spinner" /> : 'Save & suspend'}
           </button>
           <button className="btn btn-danger" onClick={stop}>Stop VM</button>
         </div>
@@ -225,7 +377,16 @@ export default function VmViewer({ session, onSessionChanged, onClosed }) {
           <span>
             <strong>Your physical drives are protected.</strong> This VM receives only the ISO as a
             read-only CD-ROM—there is no local or persistent virtual disk to install onto. Changes
-            made inside it disappear when the VM stops.
+            made inside it disappear when the VM stops; <strong>Save &amp; suspend</strong> keeps
+            them, and survives a restart of this computer.
+          </span>
+        </div>
+      )}
+      {restoring && (
+        <div className="banner banner-info">
+          <span>
+            <span className="spinner" /> Reading the saved session back off the drive. The screen
+            comes to life where you left it — this takes a moment for a large machine.
           </span>
         </div>
       )}

@@ -16,13 +16,19 @@ def test_linux_menuentry_uses_pending_boot_id():
 
 
 def test_linux_menuentry_paths_are_bootsys_relative():
+    """($root)/extracted/... and /boot/extracted/... must be the same file.
+
+    PENSYS is mounted on /boot, so a path GRUB reads under ($root) is the same
+    path minus /boot in the running system. An extra `boot/` level here is how
+    a scheduled ISO ends up written somewhere GRUB never looks.
+    """
     cfg = BootConfig(
         method="linux", kernel="vmlinuz", initrd="initrd.img",
         cmdline="boot=live", label="Debian", iso_rel_path="images/debian.iso",
     )
     text = render_menuentry(cfg, "debian-13", "Debian 13")
-    assert "linux ($root)/boot/extracted/debian-13/vmlinuz boot=live" in text
-    assert "initrd ($root)/boot/extracted/debian-13/initrd.img" in text
+    assert "linux ($root)/extracted/debian-13/vmlinuz boot=live" in text
+    assert "initrd ($root)/extracted/debian-13/initrd.img" in text
     assert "search --no-floppy --set=root --label PENSYS" in text
 
 
@@ -72,7 +78,7 @@ def _wimboot_cfg():
 def test_wimboot_menuentry_loads_the_loader_as_the_kernel():
     text = render_menuentry(_wimboot_cfg(), "win11", "Windows 11")
     assert "--id pending_boot" in text
-    assert "linux ($root)/boot/extracted/win11/wimboot" in text
+    assert "linux ($root)/extracted/win11/wimboot" in text
 
 
 def test_wimboot_menuentry_passes_all_four_files_as_one_cpio():
@@ -82,7 +88,7 @@ def test_wimboot_menuentry_passes_all_four_files_as_one_cpio():
     text = render_menuentry(_wimboot_cfg(), "win11", "Windows 11")
     initrd_line = next(ln for ln in text.splitlines() if ln.strip().startswith("initrd"))
     for member in ("bootmgfw.efi", "bcd", "boot.sdi", "boot.wim"):
-        assert f"newc:{member}:($root)/boot/extracted/win11/{member}" in initrd_line
+        assert f"newc:{member}:($root)/extracted/win11/{member}" in initrd_line
 
 
 def test_wimboot_member_order_is_preserved():

@@ -1174,6 +1174,96 @@ select.input {
   font-size: 14.5px;
 }
 
+/* Secondary line under a dialog's message: what the firmware will ask for, or
+   a warning that does not change the outcome. Set apart so the sentence that
+   says what happens next is still the one the eye lands on. */
+.dialog-detail {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--surface-alt);
+  border-left: 3px solid var(--warning);
+  color: var(--text);
+}
+
+/* The MOK enrolment screens, one line each. Numbered rather than prose: this
+   is followed once, in front of a firmware menu that looks nothing like the
+   rest of the machine, by someone who cannot come back and re-read it. */
+.enrol-steps {
+  margin: 10px 0 0;
+  padding-left: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13.5px;
+  line-height: 1.45;
+}
+
+/* The MOK enrolment code. It is asked for at a firmware screen that appears
+   after PenLive has gone, with no way to look it up and nothing to work
+   backwards from — so it is set apart from the sentence that explains it
+   rather than being a run of digits inside one. */
+.enrol-code {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  background: var(--surface);
+  border: 1px solid var(--border-hi);
+}
+
+.enrol-code-label {
+  font-size: 12.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+  color: var(--text-faint);
+}
+
+.enrol-code-value {
+  font-family: ui-monospace, 'Cascadia Code', 'DejaVu Sans Mono', monospace;
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: 6px;
+  color: var(--accent);
+  user-select: text;
+}
+
+/* A banner carrying the code needs its own line for it, rather than the
+   single row of text-then-buttons the others use. */
+.banner-stacked {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.banner-stacked .button-row {
+  justify-content: flex-end;
+}
+
+/* Saved VM sessions read as a list of things you can act on, so they borrow the
+   image card's shape rather than inventing a second one. */
+.vm-session-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.vm-session {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.vm-session-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 .console {
   flex: 1;
   min-height: 240px;

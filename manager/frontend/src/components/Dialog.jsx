@@ -20,12 +20,39 @@ export default function Dialog({ notice, onClose }) {
         </div>
         <div className="modal-body">
           <p className="dialog-text">{notice.message}</p>
+          {notice.detail && <p className="dialog-text dialog-detail">{notice.detail}</p>}
+          {/* Screens the user has to walk through after this app is gone,
+              and a code to type into one of them. Neither survives being
+              folded into a sentence: the steps get skimmed and the digits get
+              read straight past. */}
+          {notice.steps?.length > 0 && (
+            <ol className="enrol-steps">
+              {notice.steps.map((step) => (
+                <li key={step}>{step}</li>
+              ))}
+            </ol>
+          )}
+          {notice.code && (
+            <div className="enrol-code">
+              <span className="enrol-code-label">{notice.codeLabel || 'Code'}</span>
+              <span className="enrol-code-value">{notice.code}</span>
+            </div>
+          )}
         </div>
         <div className="modal-foot end">
           <div className="button-row">
             {isConfirm && (
-              <button className="btn" onClick={onClose}>
-                Cancel
+              <button
+                className="btn"
+                onClick={() => {
+                  // Some choices are between two actions rather than between an
+                  // action and nothing, so the second button gets to do
+                  // something. Without onCancel this stays a plain dismissal.
+                  notice.onCancel?.();
+                  onClose();
+                }}
+              >
+                {notice.cancelLabel || 'Cancel'}
               </button>
             )}
             <button

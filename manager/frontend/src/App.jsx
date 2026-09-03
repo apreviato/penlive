@@ -13,8 +13,9 @@ import Terminal from './components/Terminal.jsx';
 import VmViewer from './components/VmViewer.jsx';
 import { PenLiveMark } from './components/Icons.jsx';
 
-// VM is deliberately absent: it only appears once a machine is actually
-// running, because the tab is useless without a session behind it.
+// VM is deliberately absent: it only appears once there is something behind
+// it — a running machine, or a session frozen on the drive waiting to be
+// resumed or deleted. An empty VM tab is a tab with nothing to say.
 const BASE_TABS = [
   { id: 'systems', label: 'Systems' },
   { id: 'files', label: 'Files' },
@@ -33,7 +34,9 @@ export default function App() {
   const [notice, setNotice] = useState(null);
   const [fileTarget, setFileTarget] = useState(null);
   const [vmSession, setVmSession] = useState(null);
+  const [vmSessions, setVmSessions] = useState({ sessions: [], saving: [] });
   const [powering, setPowering] = useState(null);
+  const [poweringSlow, setPoweringSlow] = useState(false);
 
   const openFiles = (target = { source: 'pendata' }) => {
     setFileTarget({ ...target, nonce: Date.now() });
@@ -45,19 +48,56 @@ export default function App() {
     setTab('vm');
   };
 
-  const closeVm = () => {
+  const refreshVmSessions = useCallback(async () => {
+    try {
+      const result = await api.vmSessions();
+      setVmSessions({ sessions: result.sessions || [], saving: result.saving || [] });
+    } catch {
+      // Keep whatever was last known: a failed poll is not evidence that a
+      // session on the drive has gone away.
+    }
+  }, []);
+
+  const closeVm = (options = {}) => {
     setVmSession(null);
-    setTab((current) => (current === 'vm' ? 'systems' : current));
+    refreshVmSessions();
+    // A save leaves the tab worth staying on: the write reports its progress
+    // there, and the result is a session to resume.
+    if (!options.stay) setTab((current) => (current === 'vm' ? 'systems' : current));
   };
 
+  const hasVmContent =
+    Boolean(vmSession) || vmSessions.sessions.length > 0 || vmSessions.saving.length > 0;
   const tabs = useMemo(
-    () => (vmSession ? [...BASE_TABS.slice(0, -1), VM_TAB, BASE_TABS.at(-1)] : BASE_TABS),
-    [vmSession]
+    () => (hasVmContent ? [...BASE_TABS.slice(0, -1), VM_TAB, BASE_TABS.at(-1)] : BASE_TABS),
+    [hasVmContent]
   );
 
   // Lock the page down in the kiosk, but never on the dev server — locking out
   // reload and devtools would make the UI impossible to work on.
   useEffect(() => installKioskLockdown({ enabled: !isDevServer() }), []);
+
+  useEffect(() => {
+    refreshVmSessions();
+  }, [refreshVmSessions]);
+
+  useEffect(() => {
+    if (!powering) {
+      setPoweringSlow(false);
+      return undefined;
+    }
+    const id = setTimeout(() => setPoweringSlow(true), 90000);
+    return () => clearTimeout(id);
+  }, [powering]);
+
+  // Writing a guest's memory to a USB stick takes minutes, and the only way to
+  // know it finished is to ask. Polling stops as soon as nothing is in flight.
+  const savingVm = vmSessions.saving.some((entry) => entry.status === 'saving');
+  useEffect(() => {
+    if (!savingVm) return undefined;
+    const id = setInterval(refreshVmSessions, 1500);
+    return () => clearInterval(id);
+  }, [savingVm, refreshVmSessions]);
 
   const refreshStatus = useCallback(async () => {
     const [net, info] = await Promise.all([
@@ -145,6 +185,22 @@ export default function App() {
             ? 'The selected system will start automatically after the firmware screen.'
             : 'The screen goes blank when it is safe to unplug the stick.'}
         </div>
+        {/* Flushing a USB stick with a download's worth of dirty pages behind it
+            is genuinely slow, so a long wait here is normal rather than a sign
+            of trouble. Saying so beats leaving someone in front of a spinner
+            wondering whether the machine has hung — and leaves a way out for
+            the case where it really has. */}
+        {poweringSlow && (
+          <>
+            <div className="loading-copy">
+              Still writing everything to the drive. This can take a few minutes when a
+              download has just finished; the screen goes blank when it is done.
+            </div>
+            <button className="btn btn-sm" onClick={() => setPowering(null)}>
+              Back to PenLive
+            </button>
+          </>
+        )}
       </div>
     );
   }
@@ -196,13 +252,21 @@ export default function App() {
           onOpenFiles={openFiles}
           onOpenVm={openVm}
           onPowering={setPowering}
+          onVmSessionsChanged={refreshVmSessions}
         />
       )}
       {tab === 'files' && <FileManager onNotice={setNotice} target={fileTarget} />}
       {tab === 'tools' && <Tools />}
       {tab === 'terminal' && <Terminal />}
       {tab === 'vm' && (
-        <VmViewer session={vmSession} onSessionChanged={setVmSession} onClosed={closeVm} />
+        <VmViewer
+          session={vmSession}
+          sessions={vmSessions.sessions}
+          saving={vmSessions.saving}
+          onSessionChanged={setVmSession}
+          onSessionsChanged={refreshVmSessions}
+          onClosed={closeVm}
+        />
       )}
       {tab === 'settings' && (
         <SettingsPanel

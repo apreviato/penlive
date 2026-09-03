@@ -93,21 +93,27 @@ def client(temp_db):
         yield c
 
 
-def test_boot_is_refused_when_secure_boot_would_reject_the_kernel(client, monkeypatch, tmp_path):
-    """Scheduling a boot that the firmware will refuse is worse than refusing
-    here: the user reboots, watches it fail with no explanation, and lands back
-    in the manager via the watchdog."""
-    from app import repo
-    from app.adapters.base import BootConfig
-    from app.services import secureboot as sb
+def _ready_image(monkeypatch, tmp_path, image_id="ubuntu-test"):
+    """A downloaded, verified image plus an extraction directory of our own.
 
-    iso = tmp_path / "ubuntu.iso"
+    Pointing EXTRACTED_DIR at tmp_path matters: scheduling a boot now prunes
+    every other image out of that directory, and the real one is a developer
+    devdata tree.
+    """
+    from app import paths, repo
+
+    monkeypatch.setattr(paths, "EXTRACTED_DIR", tmp_path / "extracted")
+    iso = tmp_path / f"{image_id}.iso"
     iso.write_bytes(b"x")
     repo.upsert_image_from_catalog({
-        "id": "ubuntu-test", "name": "Ubuntu Test", "family": "ubuntu",
+        "id": image_id, "name": "Ubuntu Test", "family": "ubuntu",
         "sources": [{"url": "https://example.invalid/u.iso"}],
     })
-    repo.set_image_status("ubuntu-test", "ready", path=str(iso), adapter="ubuntu", verified=True)
+    repo.set_image_status(image_id, "ready", path=str(iso), adapter="ubuntu", verified=True)
+
+
+def _stub_prepare_and_schedule(monkeypatch):
+    from app.adapters.base import BootConfig
 
     monkeypatch.setattr(
         "app.routers.boot.prepare_boot",
@@ -117,16 +123,113 @@ def test_boot_is_refused_when_secure_boot_would_reject_the_kernel(client, monkey
                        initrd="initrd", cmdline="boot=casper", iso_rel_path="images/ubuntu.iso"),
         ),
     )
-    monkeypatch.setattr(sb, "is_enabled", lambda: True)
+
+    async def fake_schedule(image_id, family, cfg, name):
+        return None
+
+    monkeypatch.setattr("app.routers.boot.bootmanager.schedule_boot", fake_schedule)
+
+
+def test_secure_boot_enrolment_happens_without_leaving_the_boot_button(
+    client, monkeypatch, tmp_path
+):
+    """Pressing Boot must schedule the boot, not send the user to Settings.
+
+    Under Secure Boot an extracted kernel needs a machine owner key, but there
+    is nothing for the user to decide about that: the key is created, queued
+    and used to sign the kernel right here. The only thing handed back is the
+    code the firmware MOK screen will ask for.
+    """
+    from app import repo
+    from app.services import secureboot
+
+    _ready_image(monkeypatch, tmp_path)
+    _stub_prepare_and_schedule(monkeypatch)
     monkeypatch.setattr("app.routers.boot.secureboot.is_enabled", lambda: True)
     monkeypatch.setattr(
         "app.routers.boot.secureboot.state",
-        lambda: {"key_enrolled": False, "key_pending": False},
+        lambda: {"key_enrolled": False, "key_pending": False, "tools_available": True},
     )
 
+    calls = []
+
+    async def fake_daemon(cmd, **kwargs):
+        calls.append(cmd)
+        return {}
+
+    monkeypatch.setattr("app.routers.boot.daemon_client.call", fake_daemon)
+
     resp = client.post("/api/boot", json={"image_id": "ubuntu-test"})
-    assert resp.status_code == 409
-    assert resp.json()["detail"]["error"] == "secure_boot_key_not_enrolled"
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["scheduled"] is True
+    assert body["secure_boot"]["action"] == "enrol"
+    # The code travels as its own field, never inside the sentence: eight
+    # digits set in the middle of a paragraph are read straight past, and this
+    # is the one thing the user has to carry to a prompt that appears after
+    # PenLive is gone.
+    assert body["secure_boot"]["password"].isdigit()
+    assert body["secure_boot"]["password"] not in body["secure_boot"]["message"]
+    assert any("Enroll MOK" in step for step in body["secure_boot"]["steps"])
+    assert calls == ["mok_setup", "sign_kernel"]
+    # The code has to survive a refresh: MokManager asks for it at a screen
+    # that appears before PenLive is running.
+    assert repo.get_setting(secureboot.ENROLMENT_PASSWORD_SETTING) == body["secure_boot"]["password"]
+
+
+def test_a_queued_key_is_not_enrolled_a_second_time(client, monkeypatch, tmp_path):
+    """A second Boot before the MOK screen has been visited reuses the pending
+    request: importing again queues a duplicate and changes the code out from
+    under a user who already wrote the first one down."""
+    from app import repo
+    from app.services import secureboot
+
+    _ready_image(monkeypatch, tmp_path)
+    _stub_prepare_and_schedule(monkeypatch)
+    repo.set_setting(secureboot.ENROLMENT_PASSWORD_SETTING, "12345678")
+    monkeypatch.setattr("app.routers.boot.secureboot.is_enabled", lambda: True)
+    monkeypatch.setattr(
+        "app.routers.boot.secureboot.state",
+        lambda: {"key_enrolled": False, "key_pending": True, "tools_available": True},
+    )
+
+    calls = []
+
+    async def fake_daemon(cmd, **kwargs):
+        calls.append(cmd)
+        return {}
+
+    monkeypatch.setattr("app.routers.boot.daemon_client.call", fake_daemon)
+
+    resp = client.post("/api/boot", json={"image_id": "ubuntu-test"})
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["secure_boot"]["password"] == "12345678"
+    assert calls == ["sign_kernel"]
+
+
+def test_missing_signing_tools_still_schedules_the_boot(client, monkeypatch, tmp_path):
+    """A stick without sbsign cannot sign, but plenty of images chainload their
+    own signed loader, and the user can turn Secure Boot off. Refusing here
+    would leave a dead Boot button with nothing behind it."""
+    _ready_image(monkeypatch, tmp_path)
+    _stub_prepare_and_schedule(monkeypatch)
+    monkeypatch.setattr("app.routers.boot.secureboot.is_enabled", lambda: True)
+    monkeypatch.setattr(
+        "app.routers.boot.secureboot.state",
+        lambda: {"key_enrolled": False, "key_pending": False, "tools_available": False},
+    )
+
+    async def refuse(cmd, **kwargs):
+        raise AssertionError(f"must not call the daemon with no signing tools: {cmd}")
+
+    monkeypatch.setattr("app.routers.boot.daemon_client.call", refuse)
+
+    resp = client.post("/api/boot", json={"image_id": "ubuntu-test"})
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["secure_boot"]["action"] == "unavailable"
 
 
 def test_unverified_local_iso_requires_explicit_approval(client, tmp_path):
@@ -144,9 +247,10 @@ def test_unverified_local_iso_requires_explicit_approval(client, tmp_path):
 
 
 def test_boot_proceeds_when_secure_boot_is_off(client, monkeypatch, tmp_path):
-    from app import repo
+    from app import paths, repo
     from app.adapters.base import BootConfig
 
+    monkeypatch.setattr(paths, "EXTRACTED_DIR", tmp_path / "extracted")
     iso = tmp_path / "debian.iso"
     iso.write_bytes(b"x")
     repo.upsert_image_from_catalog({
@@ -174,5 +278,127 @@ def test_boot_proceeds_when_secure_boot_is_off(client, monkeypatch, tmp_path):
 
     resp = client.post("/api/boot", json={"image_id": "debian-test"})
     assert resp.status_code == 200, resp.text
-    assert resp.json()["signed_with_mok"] is False
+    assert resp.json()["secure_boot"] is None
     assert scheduled.get("ok") is True
+
+
+# ---- what the banner says while a boot is scheduled -------------------------
+#
+# Everything below is about one failure mode: the firmware enforces its rules
+# after PenLive is gone. The user meets them as "bad shim signature" or "file
+# exfat.mod not found" on a black screen, with no way to look the answer up and
+# nothing to work backwards from. Whatever is still required has to be on the
+# screen they are looking at before they press Restart.
+
+def _scheduled(monkeypatch, tmp_path, method="linux"):
+    from app import paths
+
+    state = tmp_path / "state"
+    state.mkdir()
+    meta = state / "nextboot.json"
+    meta.write_text(
+        '{"image_id": "kali", "image_name": "Kali Linux", "method": "%s",'
+        ' "created_at": "2026-09-01T00:00:00Z"}' % method,
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(paths, "NEXTBOOT_JSON", meta)
+    monkeypatch.setattr(paths, "NEXTBOOT_CFG", state / "nextboot.cfg")
+
+
+def test_an_unenrolled_key_is_reported_with_the_code_the_screen_asks_for(
+    client, monkeypatch, tmp_path
+):
+    """Without this the user restarts, meets MokManager, does not know the code,
+    presses Continue, and lands on "bad shim signature" with the boot lost."""
+    from app import repo
+    from app.services import secureboot
+
+    _scheduled(monkeypatch, tmp_path)
+    repo.set_setting(secureboot.ENROLMENT_PASSWORD_SETTING, "24681357")
+    monkeypatch.setattr("app.routers.boot.secureboot.is_enabled", lambda: True)
+    monkeypatch.setattr(
+        "app.routers.boot.secureboot.state",
+        lambda: {"key_enrolled": False, "key_pending": True, "tools_available": True},
+    )
+
+    note = client.get("/api/boot/pending").json()["secure_boot"]
+
+    assert note["action"] == "enrol"
+    assert note["password"] == "24681357"
+    # The code and the screens both travel as their own fields. Folded into the
+    # message, the digits get read straight past and the steps get skimmed - and
+    # this is followed once, in front of a firmware menu, by someone who cannot
+    # come back and re-read it.
+    assert "24681357" not in note["message"]
+    assert any("Enroll MOK" in step for step in note["steps"])
+    assert any("Reboot" in step for step in note["steps"]), "the last screen is the one missed"
+
+
+def test_a_chainload_image_under_secure_boot_says_it_will_not_start(
+    client, monkeypatch, tmp_path
+):
+    """The signed GRUB has no exfat module, so it cannot reach an ISO on
+    PENDATA at all. Letting the user restart into "file exfat.mod not found"
+    followed by "no server is specified" tells them nothing."""
+    _scheduled(monkeypatch, tmp_path, method="chainload")
+    monkeypatch.setattr("app.routers.boot.secureboot.is_enabled", lambda: True)
+
+    note = client.get("/api/boot/pending").json()["secure_boot"]
+
+    assert note["action"] == "unsupported"
+    assert "Run VM" in note["message"]
+
+
+def test_nothing_is_said_when_there_is_nothing_to_say(client, monkeypatch, tmp_path):
+    _scheduled(monkeypatch, tmp_path)
+    monkeypatch.setattr("app.routers.boot.secureboot.is_enabled", lambda: False)
+
+    assert client.get("/api/boot/pending").json()["secure_boot"] is None
+
+
+def test_an_enrolled_key_needs_no_further_explanation(client, monkeypatch, tmp_path):
+    _scheduled(monkeypatch, tmp_path)
+    monkeypatch.setattr("app.routers.boot.secureboot.is_enabled", lambda: True)
+    monkeypatch.setattr(
+        "app.routers.boot.secureboot.state",
+        lambda: {"key_enrolled": True, "key_pending": False, "tools_available": True},
+    )
+
+    assert client.get("/api/boot/pending").json()["secure_boot"] is None
+
+
+def test_a_pending_key_with_no_code_on_record_says_something_useful(
+    client, monkeypatch, tmp_path
+):
+    """Pointing at a code that is not there is worse than not mentioning one:
+    the user goes looking for a number that no longer exists anywhere."""
+    _scheduled(monkeypatch, tmp_path)
+    monkeypatch.setattr("app.routers.boot.secureboot.is_enabled", lambda: True)
+    monkeypatch.setattr(
+        "app.routers.boot.secureboot.state",
+        lambda: {"key_enrolled": False, "key_pending": False, "tools_available": True},
+    )
+
+    note = client.get("/api/boot/pending").json()["secure_boot"]
+
+    assert note["password"] is None
+    assert note["steps"] == []
+    assert "code below" not in note["message"]
+    assert "Settings" in note["message"]
+
+
+def test_the_enrolment_screens_are_described_in_one_place(client):
+    """The boot banner, the scheduling dialog and the Settings panel all walk
+    the user through the same six screens. Three copies of that list would
+    drift apart with nothing to catch it."""
+    from app.services import secureboot
+
+    steps = secureboot.enrolment_steps()
+
+    assert client.get("/api/system/secureboot").json()["enrolment_steps"] == steps
+    # The screens themselves, in order, ending on the one that is missed: after
+    # the code is accepted MokManager goes back to its menu and waits, and a
+    # machine left sitting there has enrolled nothing.
+    assert [fragment in step for fragment, step in zip(
+        ["Restart", "Enroll MOK", "Continue", "Yes", "code below", "Reboot"], steps
+    )] == [True] * 6

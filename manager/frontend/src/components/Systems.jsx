@@ -40,7 +40,9 @@ export function arrange(images, query) {
     .map(({ img }) => img);
 }
 
-export default function Systems({ network, onNotice, onOpenFiles, onOpenVm, onPowering }) {
+export default function Systems({
+  network, onNotice, onOpenFiles, onOpenVm, onPowering, onVmSessionsChanged,
+}) {
   const [images, setImages] = useState([]);
   const [storage, setStorage] = useState(null);
   const [pending, setPending] = useState(null);
@@ -96,31 +98,17 @@ export default function Systems({ network, onNotice, onOpenFiles, onOpenVm, onPo
     }
   };
 
-  const clearPending = async () => {
+  // No second confirmation: the user reached this from a dialog or banner that
+  // already says which system is about to start and offers Later.
+  const rebootNow = useCallback(async () => {
+    onPowering?.('reboot');
     try {
-      await api.clearPendingBoot();
-      setPending(null);
+      await api.rebootPending();
     } catch (err) {
+      onPowering?.(null);
       setError(err.message);
     }
-  };
-
-  const rebootNow = () =>
-    onNotice({
-      kind: 'confirm',
-      title: 'Restart now?',
-      message: 'The machine will restart and boot the scheduled system.',
-      confirmLabel: 'Restart',
-      onConfirm: async () => {
-        onPowering?.('reboot');
-        try {
-          await api.rebootPending();
-        } catch (err) {
-          onPowering?.(null);
-          setError(err.message);
-        }
-      },
-    });
+  }, [onPowering]);
 
   const shown = useMemo(() => arrange(images, query), [images, query]);
   const readyCount = images.filter((i) => i.status === 'ready' || i.status === 'downloaded').length;
@@ -149,7 +137,7 @@ export default function Systems({ network, onNotice, onOpenFiles, onOpenVm, onPo
         </div>
       )}
 
-      <PendingBootBanner pending={pending} onClear={clearPending} onReboot={rebootNow} />
+      <PendingBootBanner pending={pending} onReboot={rebootNow} />
 
       <div className="section-header">
         <h2 className="section-title">Available systems</h2>
@@ -202,6 +190,8 @@ export default function Systems({ network, onNotice, onOpenFiles, onOpenVm, onPo
           onNotice={onNotice}
           onOpenFiles={onOpenFiles}
           onOpenVm={onOpenVm}
+          onRebootNow={rebootNow}
+          onVmSessionsChanged={onVmSessionsChanged}
         />
       ))}
 

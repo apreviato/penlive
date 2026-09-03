@@ -18,6 +18,13 @@ Two chains are supported, and the build picks whichever the host can produce:
 Either way the config embedded on the ESP is tiny: find PENSYS by label and
 hand off to the real grub.cfg there, so updating the menu is overwriting a
 file rather than rebuilding an EFI binary.
+
+PENSYS is laid out exactly as the running system sees it. fstab mounts the
+partition on /boot, so `grub/`, `state/`, `extracted/`, `live/` and `wimboot`
+sit at the partition root and nowhere else: what GRUB reads as
+($root)/state/nextboot.cfg is what the manager writes as
+/boot/state/nextboot.cfg. An extra `boot/` level here would mean the two
+never refer to the same file.
 """
 from __future__ import annotations
 
@@ -25,10 +32,14 @@ from pathlib import Path
 
 from .runner import CommandRunner
 
+# Deliberately does not touch $prefix. A signed GRUB loads any module it does
+# not have built in from $prefix/x86_64-efi on the ESP, and grub-mkstandalone
+# resolves them from (memdisk)/boot/grub; repointing prefix at PENSYS before
+# grub.cfg has run its insmods takes that away. grub.cfg pins prefix itself,
+# after the module loads and just before it needs load_env/save_env.
 EMBEDDED_CFG = """\
 search --no-floppy --set=root --label PENSYS
-set prefix=($root)/boot/grub
-configfile ($root)/boot/grub/grub.cfg
+configfile ($root)/grub/grub.cfg
 """
 
 # Debian's signed GRUB is built with this prefix and will look for its config
@@ -62,6 +73,7 @@ def install_signed_chain(runner: CommandRunner, efi_mount: Path) -> None:
     runner.write_file(efi_mount / SIGNED_GRUB_PREFIX / "grub.cfg", EMBEDDED_CFG)
 
 GRUB_EFI_MODULE_DIR = Path("/usr/lib/grub/x86_64-efi")
+GRUB_EFI_TARGET = "x86_64-efi"
 
 # Without these the embedded config cannot find PENSYS or hand off to the real
 # grub.cfg, so their absence is a hard error rather than something to skip.
@@ -124,6 +136,39 @@ def build_standalone_efi(runner: CommandRunner, output_path: Path, workdir: Path
     )
 
 
+def install_grub_modules(
+    runner: CommandRunner, grub_dir: Path, module_dir: Path = GRUB_EFI_MODULE_DIR
+) -> list[str]:
+    """Put GRUB's module tree where $prefix will look for it, on PENSYS.
+
+    Debian's signed grubx64.efi carries a fixed built-in module set and loads
+    anything else from $prefix/x86_64-efi. exfat is *not* in that set, so
+    without this the chainload boot method fails at `insmod exfat` with
+    "file exfat.mod not found", then cannot find PENDATA by label, and ends at
+    a bare "no server is specified" from a GRUB that has fallen back to
+    treating the path as a network address. None of those three messages
+    mention the actual problem.
+
+    Secure Boot still refuses to load unsigned modules, so this fixes the
+    chainload method for machines with it switched off rather than for every
+    machine. It costs a few megabytes on a four-gigabyte partition.
+
+    Returns the module names installed, empty when the host has no module tree
+    (a dry run, or a build host with only the signed packages).
+    """
+    if not module_dir.is_dir():
+        return []
+    target = grub_dir / GRUB_EFI_TARGET
+    runner.run(["mkdir", "-p", str(target)])
+    names = []
+    for source in sorted(module_dir.iterdir()):
+        if source.suffix not in (".mod", ".lst") or not source.is_file():
+            continue
+        runner.install_file(source, target / source.name)
+        names.append(source.name)
+    return names
+
+
 def install_efi_partition(runner: CommandRunner, efi_mount: Path, standalone_efi: Path) -> None:
     target = efi_mount / "EFI" / "BOOT" / "BOOTX64.EFI"
     runner.run(["install", "-D", str(standalone_efi), str(target)])
@@ -137,28 +182,29 @@ def install_bootsys_files(
     recovery_cfg: Path,
     wimboot: Path | None = None,
 ) -> None:
-    grub_dir = bootsys_mount / "boot" / "grub"
-    state_dir = bootsys_mount / "boot" / "state"
-    extracted_dir = bootsys_mount / "boot" / "extracted"
+    grub_dir = bootsys_mount / "grub"
+    state_dir = bootsys_mount / "state"
+    extracted_dir = bootsys_mount / "extracted"
     for d in (grub_dir, state_dir, extracted_dir):
         runner.run(["mkdir", "-p", str(d)])
 
     runner.run(["install", "-m", "0644", str(grub_cfg), str(grub_dir / "grub.cfg")])
     runner.run(["install", "-m", "0644", str(recovery_cfg), str(grub_dir / "recovery.cfg")])
+    install_grub_modules(runner, grub_dir)
 
     # Optional: without it the stick is exactly as it was before, except that
     # Windows images stay mount-and-VM-only. Debian packages no wimboot, so it
     # cannot simply be pulled in with the rest of the live system — see
     # docs/BUILD.md for where to get it.
     if wimboot is not None:
-        runner.run(["install", "-m", "0644", str(wimboot), str(bootsys_mount / "boot" / "wimboot")])
+        runner.run(["install", "-m", "0644", str(wimboot), str(bootsys_mount / "wimboot")])
 
-    # Use GRUB's conventional $prefix/grubenv. Besides working with the stock
-    # load_env/save_env flow, this is more compatible with signed EFI builds
-    # than an environment block at a custom path.
+    # GRUB's conventional $prefix/grubenv, which grub.cfg pins to ($root)/grub.
+    # It holds one variable: next_entry, the one-shot that says "this boot, and
+    # only this boot, takes the scheduled ISO".
     bootenv = grub_dir / "grubenv"
     runner.run(["grub-editenv", str(bootenv), "create"])
-    runner.run(["grub-editenv", str(bootenv), "set", "boot_attempts=0"])
+    runner.run(["grub-editenv", str(bootenv), "set", "next_entry="])
 
     # No nextboot.cfg by default: GRUB's "if [ -f ... ]" guard in grub.cfg
     # means Boot Manager is the only entry until something schedules a boot.

@@ -147,6 +147,10 @@ def test_runtime_storage_is_writable_by_the_unprivileged_manager():
     assert "chown -R penlive:penlive" in script
     assert "grub-editenv /boot/grub/.grubenv.tmp create" in script
     assert "mv -f /boot/grub/.grubenv.tmp /boot/grub/grubenv" in script
+    # The menu is reinstalled from the squashfs on every boot, so a fix to the
+    # boot logic reaches an already-flashed stick without rewriting it.
+    assert "/opt/penlive/grub" in script
+    assert "install -m 0644" in script
     assert "Before=penlive-daemon.service penlive-aria2.service penlive-api.service" in unit
     assert "RequiresMountsFor=/boot /data" in unit
     assert "systemctl enable penlive-storage.service" in hook
@@ -163,6 +167,11 @@ def test_downloads_are_serialized_to_protect_usb_write_speed():
 
 
 def test_pending_boot_uses_grubs_one_shot_entry():
+    """The selection has to be consumed by the boot that takes it.
+
+    Without `save_env next_entry` the ISO would start again on every later
+    reboot; without `set default` it would never start at all.
+    """
     config = (ROOT / "grub" / "grub.cfg").read_text()
 
     assert 'if [ "x$next_entry" = "xpending_boot" ]' in config
@@ -170,10 +179,45 @@ def test_pending_boot_uses_grubs_one_shot_entry():
     assert "set timeout=2" in config
     assert "set timeout_style=menu" in config
     assert "set next_entry=" in config
-    assert "boot_attempts next_entry" in config
+    assert "save_env next_entry" in config
+    # Bare load_env/save_env against a pinned $prefix, not -f: a custom
+    # environment path is the form signed GRUB builds handle least reliably.
     assert "load_env -f" not in config
     assert "save_env -f" not in config
     assert "$prefix/grubenv" in config
+    # Pinned in grub.cfg, after the insmods, so save_env reaches the block on
+    # PENSYS instead of the ESP directory a signed GRUB starts with.
+    # Before the insmods, not after: a module GRUB does not carry built in is
+    # loaded from $prefix, and the ESP holds only the stub config. After the
+    # search, because $prefix names ($root).
+    assert "set prefix=($root)/grub" in config
+    assert (
+        config.index("search --no-floppy --set=root --label PENSYS")
+        < config.index("set prefix=($root)/grub")
+        < config.index("insmod exfat")
+    )
+
+
+def test_grub_reads_the_same_paths_the_manager_writes():
+    """PENSYS is mounted on /boot, so ($root)/state is /boot/state and nothing
+    else. A `boot/` level in either config is the bug that left the GRUB menu
+    showing only PenLive and Recovery after an ISO had been scheduled."""
+    config = (ROOT / "grub" / "grub.cfg").read_text()
+    recovery = (ROOT / "grub" / "recovery.cfg").read_text()
+
+    assert "($root)/state/nextboot.cfg" in config
+    assert "($root)/grub/recovery.cfg" in config
+    assert "($root)/live/vmlinuz" in config
+    assert "($root)/boot/" not in config
+    assert "($root)/boot/" not in recovery
+
+
+def test_the_scheduled_entry_falls_back_to_the_manager():
+    """A kernel that will not load must not leave the user at a GRUB prompt on
+    a machine they cannot otherwise boot."""
+    config = (ROOT / "grub" / "grub.cfg").read_text()
+
+    assert "set fallback=boot_manager" in config
 
 
 def test_power_services_have_bounded_stop_times():

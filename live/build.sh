@@ -63,6 +63,10 @@ cp -r "${REPO_ROOT}/manager/backend/app" "${STAGE}/backend/"
 cp "${REPO_ROOT}/manager/backend/requirements.txt" "${STAGE}/backend/"
 cp -r "${REPO_ROOT}/builder/penlive" "${STAGE}/builder/"
 cp -r "${REPO_ROOT}/catalog" "${STAGE}/"
+# The GRUB menu ships inside the squashfs as well as on PENSYS, so
+# prepare-storage.sh can reinstall it on every boot (see that script): a fix to
+# the boot logic then reaches an already-flashed stick without rewriting it.
+cp -r "${REPO_ROOT}/grub" "${STAGE}/"
 for doc in ARCHITECTURE PLUGINS BUILD ADAPTERS; do
     cp "${REPO_ROOT}/docs/${doc}.md" "${STAGE}/docs/" 2>/dev/null || true
 done

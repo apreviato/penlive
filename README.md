@@ -164,7 +164,7 @@ The manual steps, and how to test in QEMU before touching real hardware, are in
 ```
 GPT
 ├── p1  PENEFI       FAT32   512M   EFI/BOOT/{BOOTX64.EFI,grubx64.efi,mmx64.efi} + EFI/debian/grub.cfg
-├── p2  PENSYS       ext4    4G     live/ (kernel, initrd, squashfs) + boot/state + boot/extracted + boot/wimboot
+├── p2  PENSYS       ext4    4G     live/ (kernel, initrd, squashfs) + grub/ + state/ + extracted/ + wimboot
 ├── p3  persistence  ext4    8G     OverlayFS (live-boot) — settings, Wi-Fi
 └── p4  PENDATA      exFAT   rest   images/ (ISOs), windows/ (unpacked Setup media), catalog/, logs/
 ```

@@ -1,37 +1,64 @@
 import React from 'react';
 
-export default function PendingBootBanner({ pending, onClear, onReboot }) {
+/* One scheduled system, one action.
+
+   The selection is already one-shot on both sides - GRUB consumes it before
+   booting, and the manager deletes it the moment it starts - so there is
+   nothing here to cancel or retry. Restarting is the only thing left to do
+   with it, and picking a different system simply replaces it.
+
+   The Secure Boot line is the exception worth the space. Whatever the firmware
+   still wants is enforced after PenLive is gone: the user meets it as "bad
+   shim signature" on a black screen, with nothing to work backwards from and
+   no way to look the answer up. It belongs on screen before they restart, not
+   in a dialog they dismissed. */
+export default function PendingBootBanner({ pending, onReboot }) {
   if (!pending) return null;
 
-  const exhausted = pending.attempts >= pending.max_attempts;
+  const secureBoot = pending.secure_boot;
+  const blocked = secureBoot?.action === 'unsupported';
 
-  return (
-    <div className={`banner ${exhausted ? 'banner-error' : 'banner-warning'}`}>
-      <span>
-        {exhausted ? (
-          <>
-            <strong>{pending.image_name}</strong> failed to start {pending.attempts} times and was
-            disabled automatically. PenLive will keep starting normally.
-          </>
-        ) : (
-          <>
-            <strong>{pending.image_name}</strong>{' '}
-            {pending.attempts > 0
-              ? `did not take over the previous boot (attempt ${pending.attempts} of ${pending.max_attempts}). You can retry it.`
-              : 'is scheduled for the next boot.'}{' '}
-            If this computer requires F12, select the USB drive there; PenLive will then highlight
-            this system in its boot menu.
-          </>
-        )}
-      </span>
-      <span className="button-row">
-        {!exhausted && (
+  if (blocked) {
+    return (
+      <div className="banner banner-error">
+        <span>
+          <strong>{pending.image_name}</strong> is scheduled, but will not start as things
+          stand. {secureBoot.message}
+        </span>
+        <span className="button-row">
           <button className="btn btn-sm btn-primary" onClick={onReboot}>
             Restart now
           </button>
-        )}
-        <button className="btn btn-sm" onClick={onClear}>
-          Cancel
+        </span>
+      </div>
+    );
+  }
+
+  const enrolling = secureBoot?.action === 'enrol';
+
+  return (
+    <div className={`banner banner-warning ${enrolling ? 'banner-stacked' : ''}`}>
+      <span>
+        <strong>{pending.image_name}</strong> starts on the next restart, this once. If this
+        computer needs F12 to boot from USB, choose the PenLive drive there.
+        {enrolling && <> {secureBoot.message}</>}
+      </span>
+      {enrolling && secureBoot.steps?.length > 0 && (
+        <ol className="enrol-steps">
+          {secureBoot.steps.map((step) => (
+            <li key={step}>{step}</li>
+          ))}
+        </ol>
+      )}
+      {enrolling && secureBoot.password && (
+        <div className="enrol-code">
+          <span className="enrol-code-label">Code to type</span>
+          <span className="enrol-code-value">{secureBoot.password}</span>
+        </div>
+      )}
+      <span className="button-row">
+        <button className="btn btn-sm btn-primary" onClick={onReboot}>
+          Restart now
         </button>
       </span>
     </div>

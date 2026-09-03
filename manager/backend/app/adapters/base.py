@@ -20,7 +20,7 @@ class BootConfig:
     label: str
     # "linux" method: filenames only, relative to the per-image extract_dir
     # bootmanager.py placed them in — it decides the final PENSYS-absolute
-    # path (boot/extracted/<image_id>/<filename>), adapters don't need to know it.
+    # path (extracted/<image_id>/<filename>), adapters don't need to know it.
     kernel: str | None = None
     initrd: str | None = None
     cmdline: str | None = None

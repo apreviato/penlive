@@ -78,6 +78,10 @@ class VmRequest(BaseModel):
     memory_mib: int = 4096
     cpus: int = 2
     enable_kvm: bool = True
+    # Thaw the session frozen from an earlier run instead of booting the ISO.
+    # The saved memory and CPU count then win over the fields above: a
+    # migration stream only loads into the machine that produced it.
+    resume: bool = False
 
 
 class VmDiskRequest(BaseModel):
@@ -94,9 +98,9 @@ class PendingBootOut(BaseModel):
     image_id: str
     image_name: str
     method: str
-    attempts: int
-    max_attempts: int = 3
     created_at: str
+    # What the firmware will still ask for before this starts, if anything.
+    secure_boot: dict | None = None
 
 
 class StorageOut(BaseModel):

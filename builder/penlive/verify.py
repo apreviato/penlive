@@ -7,8 +7,9 @@ REQUIRED_PENSYS_FILES = (
     "live/vmlinuz",
     "live/initrd.img",
     "live/filesystem.squashfs",
-    "boot/grub/grub.cfg",
-    "boot/grub/grubenv",
+    "grub/grub.cfg",
+    "grub/recovery.cfg",
+    "grub/grubenv",
 )
 REQUIRED_EFI_FILES = ("EFI/BOOT/BOOTX64.EFI",)
 # Present only on a signed (Secure Boot capable) build; their absence is not a

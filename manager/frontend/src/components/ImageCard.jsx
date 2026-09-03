@@ -14,7 +14,8 @@ const STATUS_LABEL = {
 };
 
 export default function ImageCard({
-  image, online = false, onChanged, onError, onNotice, onOpenFiles, onOpenVm,
+  image, online = false, onChanged, onError, onNotice, onOpenFiles, onOpenVm, onRebootNow,
+  onVmSessionsChanged,
 }) {
   const [progress, setProgress] = useState(null);
   const [busy, setBusy] = useState(null);
@@ -81,12 +82,23 @@ export default function ImageCard({
   const scheduleBoot = (allowUnverified = false) =>
     run('boot', async () => {
       const result = await api.scheduleBoot(image.id, allowUnverified);
+      // Secure Boot enrolment used to be a separate errand in Settings before
+      // the ISO could be scheduled at all. It is done by now; what comes back
+      // is only what the user has to type at the firmware's own MOK screen.
+      const detail = [result?.secure_boot?.message, result?.warning]
+        .filter(Boolean)
+        .join(' ');
       onNotice({
-        kind: 'boot',
-        title: 'Scheduled for next boot',
-        message: result?.warning
-          ? `${image.name} will start the next time this machine reboots. ${result.warning}.`
-          : `${image.name} will start the next time this machine reboots.`,
+        kind: 'confirm',
+        title: 'Scheduled for the next restart',
+        message: `${image.name} starts the next time this machine restarts, this once.`,
+        detail: detail || null,
+        steps: result?.secure_boot?.steps || null,
+        code: result?.secure_boot?.password || null,
+        codeLabel: 'Code to type',
+        confirmLabel: 'Restart now',
+        cancelLabel: 'Later',
+        onConfirm: onRebootNow,
       });
     });
 
@@ -111,11 +123,39 @@ export default function ImageCard({
       onOpenFiles?.({ source: `iso:${image.id}`, label: image.name });
     });
 
-  const runVm = () =>
+  const launchVm = (resume) =>
     run('vm', async () => {
-      const result = await api.startVm(image.id);
+      const result = await api.startVm(image.id, { resume });
       onOpenVm?.({ image, ...result });
+      if (resume) onVmSessionsChanged?.();
     });
+
+  const runVm = async () => {
+    // Silently booting the ISO would throw away a machine the user deliberately
+    // froze, so ask before doing either. A lookup that fails says nothing about
+    // whether a session exists, so fall through to the ordinary start rather
+    // than blocking Run VM on it.
+    let saved = null;
+    try {
+      saved = await api.vmSession(image.id);
+    } catch {
+      saved = null;
+    }
+    if (!saved || !saved.usable) {
+      launchVm(false);
+      return;
+    }
+    onNotice({
+      kind: 'confirm',
+      title: 'Resume the saved session?',
+      message: `${image.name} has a session saved on ${new Date(saved.saved_at).toLocaleString()}. Resuming picks it up exactly where it was left.`,
+      detail: 'Starting fresh boots the ISO from the beginning and leaves the saved session untouched.',
+      confirmLabel: 'Resume session',
+      cancelLabel: 'Start fresh',
+      onConfirm: () => launchVm(true),
+      onCancel: () => launchVm(false),
+    });
+  };
 
   const remove = () =>
     onNotice({

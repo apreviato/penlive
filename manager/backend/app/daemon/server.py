@@ -187,24 +187,117 @@ async def handle_umount_device(args: dict) -> dict:
     return {"device": device}
 
 
+# lsblk emits real JSON booleans for RM/RO only from util-linux 2.38; before
+# that they are the strings "0" and "1", and bool("0") is True - which would
+# report every disk as read-only and make Enable drive access impossible.
+def _lsblk_flag(value: object) -> bool:
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
+SYS_BLOCK = Path("/sys/class/block")
+
+
+def _kernel_name(device: str) -> str:
+    """The kernel's own name for a device node: /dev/disk/by-id/... -> sda.
+
+    lsblk is free to print a different spelling of the same device than the one
+    it was handed (a by-id or by-path symlink, a /dev/mapper name), so comparing
+    the two strings is a check on lsblk's formatting rather than on what the
+    device actually is.
+    """
+    try:
+        return Path(os.path.realpath(device)).name
+    except OSError:
+        return Path(device).name
+
+
+def _require_whole_disk(device: str) -> str:
+    """Ask the kernel - not lsblk - whether this is a whole drive.
+
+    sysfs answers this definitively: every block device has a directory under
+    /sys/class/block, and only a partition has a `partition` file in it. Going
+    through lsblk for the verdict meant any disagreement between the path we
+    were handed and the path lsblk chose to print came back as "could not
+    confirm that /dev/sda is one whole disk" - a dead end that told the user
+    nothing and had nothing to do with the drive.
+    """
+    name = _kernel_name(device)
+    block = SYS_BLOCK / name
+    if not block.exists():
+        raise RuntimeError(
+            f"the kernel has no block device called {name}. The drive may have been "
+            "unplugged since the list was drawn - close this dialog and open it again."
+        )
+    if (block / "partition").exists():
+        raise RuntimeError(
+            f"{device} is a partition, not a whole drive. Select the drive itself: an "
+            "installer needs the entire device to write a partition table to."
+        )
+    return name
+
+
+def _run_lsblk(device: str) -> str:
+    """lsblk's JSON for one device, tolerating an older column set.
+
+    MOUNTPOINTS arrived in util-linux 2.37. Trying the modern column first and
+    falling back keeps this working on a stick built against an older base
+    without pretending the disk could not be read.
+    """
+    last_error = ""
+    for columns in ("PATH,KNAME,TYPE,LABEL,MOUNTPOINTS,RO", "PATH,KNAME,TYPE,LABEL,MOUNTPOINT,RO"):
+        proc = subprocess.run(
+            ["lsblk", "-J", "-p", "-o", columns, "--", device],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if proc.returncode == 0:
+            return proc.stdout
+        last_error = proc.stderr.strip()
+    raise RuntimeError(last_error or f"could not inspect {device}")
+
+
 def _vm_disk_nodes(device: str) -> list[dict]:
-    """Return the selected disk and descendants as reported by the kernel."""
+    """Return the selected whole disk and its descendants.
+
+    Two sources on purpose: sysfs decides whether this is a whole drive, and
+    lsblk supplies the labels, mount points and stacked layers that decide
+    whether it is safe to hand over.
+    """
     import json
 
-    proc = subprocess.run(
-        ["lsblk", "-J", "-p", "-o", "PATH,TYPE,LABEL,MOUNTPOINTS,RO", device],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    if proc.returncode != 0:
-        raise RuntimeError(proc.stderr.strip() or f"could not inspect {device}")
+    wanted = _require_whole_disk(device)
+    stdout = _run_lsblk(device)
     try:
-        roots = json.loads(proc.stdout).get("blockdevices", [])
+        roots = json.loads(stdout).get("blockdevices", [])
     except (ValueError, AttributeError) as exc:
         raise RuntimeError(f"could not understand the device layout for {device}") from exc
-    if len(roots) != 1 or roots[0].get("path") != device:
-        raise RuntimeError(f"could not confirm that {device} is one whole disk")
+
+    root = next(
+        (
+            node for node in roots
+            if any(
+                Path(str(node.get(key))).name == wanted
+                for key in ("kname", "path", "name")
+                if node.get(key)
+            )
+        ),
+        None,
+    )
+    if root is None:
+        # sysfs has already confirmed this is a whole drive, so lsblk not
+        # listing it means its view is stale or it printed something we did not
+        # recognise. Say what it did report: the old message named neither.
+        reported = ", ".join(
+            str(node.get("path") or node.get("kname") or node.get("name") or "?") for node in roots
+        )
+        raise RuntimeError(
+            f"lsblk did not list {device} among the devices it found"
+            + (f" (it reported {reported})" if reported else " (it reported nothing)")
+            + ". Close this dialog and open it again to rescan."
+        )
 
     nodes: list[dict] = []
 
@@ -213,12 +306,14 @@ def _vm_disk_nodes(device: str) -> list[dict]:
         for child in node.get("children") or []:
             walk(child)
 
-    walk(roots[0])
+    walk(root)
     return nodes
 
 
 def _node_mounts(node: dict) -> list[str]:
     value = node.get("mountpoints")
+    if value is None:
+        value = node.get("mountpoint")
     if isinstance(value, list):
         return [str(item) for item in value if item]
     if value:
@@ -240,7 +335,7 @@ async def handle_prepare_vm_disk(args: dict) -> dict:
     nodes = _vm_disk_nodes(device)
     if any((node.get("label") or "") in _PENLIVE_LABELS for node in nodes):
         raise RuntimeError("the PenLive USB drive can never be attached as an install target")
-    if any(bool(node.get("ro")) for node in nodes):
+    if any(_lsblk_flag(node.get("ro")) for node in nodes):
         raise RuntimeError(f"{device} is read-only")
 
     active_layers = sorted({
@@ -345,7 +440,7 @@ async def handle_write_nextboot(args: dict) -> dict:
                 "free download space on PENDATA is a separate partition."
             ) from exc
 
-    warning = _reset_boot_attempts(arm_pending=True)
+    warning = _set_next_entry("pending_boot")
     if warning:
         _discard_pending_boot_best_effort()
         raise RuntimeError(f"could not arm the selected ISO for the next boot: {warning}")
@@ -430,7 +525,7 @@ async def handle_clear_nextboot(args: dict) -> dict:
                 await handle_remount_boot_rw({})
                 continue
             raise RuntimeError(f"could not clear the previous boot selection: {exc}") from exc
-    return {"warning": _reset_boot_attempts(arm_pending=False)}
+    return {"warning": _set_next_entry("")}
 
 
 def _write_durable(path: Path, text: str) -> None:
@@ -450,30 +545,24 @@ def _fsync_directory(path: Path) -> None:
         os.close(descriptor)
 
 
-def _reset_boot_attempts(*, arm_pending: bool | None = None) -> str | None:
-    """Reset the watchdog and optionally set/clear GRUB's one-shot entry."""
-    assignments = ["boot_attempts=0"]
-    if arm_pending is not None:
-        assignments.append("next_entry=pending_boot" if arm_pending else "next_entry=")
-    return _edit_boot_environment(assignments, require_existing=bool(arm_pending))
+def _set_next_entry(value: str) -> str | None:
+    """Set (or clear) GRUB's one-shot selector.
 
-
-def _arm_pending_boot() -> str | None:
-    """Select the pending entry once without erasing the retry counter."""
-    return _edit_boot_environment(["next_entry=pending_boot"], require_existing=True)
-
-
-def _edit_boot_environment(assignments: list[str], *, require_existing: bool) -> str | None:
+    `next_entry` is the entire contents of the environment block: grub.cfg
+    consumes it before booting the scheduled entry, which is what stops a
+    selection from repeating on later reboots. Clearing it is allowed to be a
+    no-op when there is no block at all - nothing is armed in that case.
+    """
     if not paths.BOOTENV.exists():
-        if require_existing:
-            warning = _create_boot_environment()
-            if warning:
-                return warning
-        else:
+        if not value:
             return None
+        warning = _create_boot_environment()
+        if warning:
+            return warning
+    assignment = f"next_entry={value}"
     try:
         subprocess.run(
-            ["grub-editenv", str(paths.BOOTENV), "set", *assignments],
+            ["grub-editenv", str(paths.BOOTENV), "set", assignment],
             check=True, capture_output=True, text=True, timeout=15,
         )
     except FileNotFoundError:
@@ -482,15 +571,15 @@ def _edit_boot_environment(assignments: list[str], *, require_existing: bool) ->
         return "grub-editenv did not finish, so GRUB's boot state could not be updated"
     except subprocess.CalledProcessError:
         # Old sticks and interrupted filesystem repairs can leave a zero-byte
-        # or otherwise invalid environment block behind. It only contains our
-        # one-shot selector and retry count, so replacing it is both safe and
-        # much more useful than permanently disabling native boot.
+        # or otherwise invalid environment block behind. It only contains the
+        # one-shot selector, so replacing it is both safe and much more useful
+        # than permanently disabling native boot.
         warning = _create_boot_environment()
         if warning:
             return warning
         try:
             subprocess.run(
-                ["grub-editenv", str(paths.BOOTENV), "set", *assignments],
+                ["grub-editenv", str(paths.BOOTENV), "set", assignment],
                 check=True, capture_output=True, text=True, timeout=15,
             )
         except FileNotFoundError:
@@ -604,27 +693,83 @@ def _release_penlive_mounts() -> None:
             pass
 
 
-def _flush_penlive_storage() -> None:
-    """Push boot metadata and completed writes out while the UI is still up."""
-    targets = [str(path) for path in (paths.BOOT_MOUNT, paths.DATA_MOUNT) if path.exists()]
-    if not targets:
+def _sync(targets: list[Path], *, timeout: int) -> None:
+    existing = [str(path) for path in targets if path.exists()]
+    if not existing:
         return
     try:
-        subprocess.run(["sync", "-f", *targets], check=False, timeout=20)
+        subprocess.run(["sync", "-f", *existing], check=False, timeout=timeout)
     except (FileNotFoundError, subprocess.TimeoutExpired):
         # systemd still performs its normal final filesystem sync.
         pass
 
 
+def _flush_boot_state() -> None:
+    """Push the boot selection out. Small, fast, and the reboot depends on it."""
+    _sync([paths.BOOT_MOUNT], timeout=10)
+
+
+def _flush_penlive_storage() -> None:
+    """Push everything else out before systemd starts tearing mounts down.
+
+    PENDATA is the slow one: exFAT on a USB stick, holding whatever a download
+    left dirty. Doing it here rather than leaving it to shutdown is what keeps
+    the blank screen at the end short - but it is also why it must not happen
+    while a request is still open.
+    """
+    _sync([paths.BOOT_MOUNT, paths.DATA_MOUNT], timeout=120)
+
+
+# Long enough for the reply to travel back over the socket and reach the
+# browser, short enough that the user does not notice it.
+_POWER_SETTLE_SECONDS = 0.3
+_power_task: asyncio.Task | None = None
+
+
+def _schedule_power_transition(action: str) -> None:
+    """Answer first, then take the machine down.
+
+    Flushing PENDATA can take a long time on a USB stick with a download's
+    worth of dirty pages, and holding the reply open for it made the UI's
+    request time out after 20 seconds: the Restarting screen gave up, dropped
+    the user back into the app, and the machine then went down underneath them
+    a minute later. Nothing about that told them what was happening.
+
+    The reply is the promise that the machine is going down. The work that
+    makes that true happens after it, and the only part that can still be
+    reported as a failure - arming the boot entry - has already run.
+    """
+    global _power_task
+    if _power_task is not None and not _power_task.done():
+        log.info("a power transition is already in progress; ignoring %s", action)
+        return
+    _power_task = asyncio.create_task(_power_transition(action))
+
+
+async def _power_transition(action: str) -> None:
+    await asyncio.sleep(_POWER_SETTLE_SECONDS)
+    # to_thread: sync(1) and umount(8) are blocking, and the daemon still has
+    # to answer the UI's status polls while the screen says "Restarting".
+    await asyncio.to_thread(_flush_penlive_storage)
+    await asyncio.to_thread(_release_penlive_mounts)
+    try:
+        subprocess.run(["systemctl", "--no-block", action], check=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        log.exception("could not ask systemd to %s", action)
+
+
 async def handle_reboot(args: dict) -> dict:
     if paths.NEXTBOOT_CFG.exists():
         _require_pensys_mount()
-        warning = _arm_pending_boot()
+        # Re-arm rather than assume: a boot scheduled minutes ago may have had
+        # its one-shot consumed by an intervening restart from outside the app.
+        warning = _set_next_entry("pending_boot")
         if warning:
             raise RuntimeError(f"could not arm the selected ISO before restart: {warning}")
-    _flush_penlive_storage()
-    _release_penlive_mounts()
-    subprocess.run(["systemctl", "--no-block", "reboot"], check=True, timeout=5)
+    # PENSYS is small and carries the one thing this restart depends on, so it
+    # is flushed here, where a failure can still be reported to the user.
+    _flush_boot_state()
+    _schedule_power_transition("reboot")
     return {"rebooting": True}
 
 
@@ -653,9 +798,8 @@ async def handle_write_usb(args: dict) -> dict:
 
 
 async def handle_poweroff(args: dict) -> dict:
-    _flush_penlive_storage()
-    _release_penlive_mounts()
-    subprocess.run(["systemctl", "--no-block", "poweroff"], check=True, timeout=5)
+    _flush_boot_state()
+    _schedule_power_transition("poweroff")
     return {"powering_off": True}
 
 

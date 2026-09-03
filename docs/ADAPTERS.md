@@ -43,7 +43,7 @@ BootConfig(
 ```
 
 `kernel`/`initrd` are **file names only**. The `bootmanager` builds the final
-path (`boot/extracted/<image_id>/...`); an adapter does not need to know where
+path (`extracted/<image_id>/...`); an adapter does not need to know where
 the file ends up.
 
 `iso_rel_path` is the path of the ISO **on the stick**, and it is what goes into
@@ -98,6 +98,14 @@ first candidates if a new adapter is worth writing.
 > The Arch and Proxmox `cmdline` values vary between releases. Treat them as a
 > starting point: check `/loader/entries/*.conf` or `/boot/grub/grub.cfg` inside
 > the specific ISO before relying on them in production.
+
+> **Check every layout the family ships.** FedoraAdapter looks for a kernel
+> under `/images/pxeboot` (netinst and DVD) *and* under `/isolinux` (what
+> livemedia-creator puts on a Live image, and all that several spins carry).
+> Missing one does not fail loudly: the image quietly drops to
+> GenericEfiAdapter, gets chainloaded off the exFAT data partition, and dies in
+> GRUB with an error about `exfat.mod` that never mentions the distribution. A
+> `detect()` that is too narrow is worse than one that is absent.
 
 ## Writing a new adapter
 

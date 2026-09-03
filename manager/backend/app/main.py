@@ -18,7 +18,9 @@ from .routers import (
     boot, downloads, files, images, jobs, mount, network, system, system_info, terminal, tools, vm,
 )
 from .services import aria2 as aria2_client
-from .services import catalog, downloader, keyboard, local_images, vm as vm_service
+from .services import (
+    bootmanager, catalog, downloader, keyboard, local_images, vmsession, vm as vm_service,
+)
 
 log = logging.getLogger("penlive.api")
 
@@ -29,6 +31,12 @@ FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 async def lifespan(app: FastAPI):
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     paths.ensure_dirs()
+    # A scheduled boot is for the next restart and that restart only. PenLive
+    # being up means it already happened (or was passed over), so the selection
+    # is retired here rather than left to fire again on some later reboot.
+    await bootmanager.clear_on_startup()
+    # A save interrupted by a power cut leaves gigabytes that nothing can read.
+    vmsession.sweep_partials()
     await downloader.resume_watchers()
     # live-boot restores /etc from persistence, but the X session starts fresh,
     # so the saved layout has to be re-applied on every boot.

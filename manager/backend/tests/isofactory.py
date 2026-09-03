@@ -104,6 +104,15 @@ FEDORA_LIVE_FILES = {
     "/LiveOS/squashfs.img": b"fake-fedora-live-root",
 }
 
+# Several Fedora spins ship the kernel only under /isolinux. Without this
+# layout the image falls through to the generic chainloader.
+FEDORA_LIVE_ISOLINUX_FILES = {
+    "/isolinux/vmlinuz": b"fake-fedora-kernel",
+    "/isolinux/initrd.img": b"fake-fedora-initrd",
+    "/LiveOS/squashfs.img": b"fake-fedora-live-root",
+    "/EFI/BOOT/BOOTX64.EFI": b"fake-efi-loader",
+}
+
 ARCH_FILES = {
     "/arch/boot/x86_64/vmlinuz-linux": b"fake-arch-kernel",
     "/arch/boot/x86_64/initramfs-linux.img": b"fake-arch-initrd",

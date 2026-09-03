@@ -10,10 +10,10 @@ UEFI
  └─ EFI/BOOT/BOOTX64.EFI          (shim, Microsoft-signed, on PENEFI)
      └─ EFI/BOOT/grubx64.efi      (GRUB, Debian-signed, verified by shim)
          └─ EFI/debian/grub.cfg   (stub: find PENSYS, hand off)
-             └─ configfile → PENSYS/boot/grub/grub.cfg
+             └─ configfile → PENSYS/grub/grub.cfg
          ├─ menuentry "PenLive Manager"          (default)
-         ├─ source boot/state/nextboot.cfg       (if present and attempts < 3)
-         └─ source boot/grub/recovery.cfg        (always)
+         ├─ source state/nextboot.cfg            (if a system is scheduled)
+         └─ source grub/recovery.cfg             (always)
              └─ vmlinuz + initrd → live-boot
                  ├─ PENSYS/live/filesystem.squashfs   (read-only)
                  └─ LABEL=persistence partition       (OverlayFS, writable)
@@ -33,34 +33,113 @@ partition by its `PENSYS` label and `configfile` into the real `grub.cfg`. All
 the menu logic lives in an ordinary file on an ext4 partition — updating the
 menu is overwriting a file, not rebuilding or resigning an EFI binary.
 
-### The boot watchdog (what stops the stick bricking itself)
+### One layout, two readers
 
-GRUB has no increment operator and no `rm`. That shaped two things:
+PENSYS is mounted on `/boot`, so the partition root **is** `/boot` to the
+running system: `grub/`, `state/`, `extracted/`, `live/` and `wimboot` sit
+directly there and nowhere else. What GRUB reads as `($root)/state/nextboot.cfg`
+is what the manager writes as `/boot/state/nextboot.cfg`.
 
-1. The `boot_attempts` counter rises through an explicit `if/elif` chain in
-   `grub.cfg`, not `+= 1`. On reaching 3, the pending boot is ignored and the
-   manager starts normally. A bad `cmdline` from an adapter cannot trap the
-   user in a boot loop.
-2. "Cancel pending boot" from GRUB **does not delete** the file — GRUB cannot.
-   It boots the manager with `penlive.clear_pending=1`, and the daemon deletes
-   it once Linux is running.
+This is worth stating because getting it wrong is silent. An extra `boot/`
+level on the partition means the manager writes `PENSYS/state/nextboot.cfg`
+while GRUB tests `PENSYS/boot/state/nextboot.cfg`, and the `if [ -f ... ]`
+guard simply does not fire: the scheduled system never appears in the menu, no
+error is produced anywhere, and the same split silently disables `grubenv` and
+`wimboot` too. `builder/tests/test_kiosk_boot.py` asserts that neither config
+contains `($root)/boot/`.
+
+### Restart answers before it reboots
+
+`handle_reboot` arms the boot entry, flushes PENSYS — small, fast, and the one
+thing the restart depends on — and then answers. The rest, flushing PENDATA and
+releasing PenLive's own mounts, happens in a background task before
+`systemctl reboot`.
+
+Doing that work inside the request was a real bug with a confusing shape.
+Syncing exFAT on a USB stick with a download's worth of dirty pages routinely
+takes longer than the UI's 20-second request timeout, so the Restarting screen
+gave up, reported a timeout, and dropped the user back into the app — which
+then rebooted underneath them a minute later. It looked intermittent because it
+depended entirely on how much was dirty. The reply is the promise that the
+machine is going down; only the part that can still be *reported* as a failure
+belongs in front of it.
+
+The flush stays before `systemctl` rather than being left to shutdown, because
+that is what keeps the blank screen at the end short. After 90 seconds the
+Restarting screen says so and offers a way back, so a genuine hang is not
+indistinguishable from a slow stick.
+
+### Scheduled boot: once, and only next time
+
+Pressing Boot must mean "this system starts on the next restart", not "this
+system starts from now on". Two independent mechanisms make that true, because
+each covers a case the other cannot:
+
+1. **GRUB consumes the selection.** `grub.cfg` reads `next_entry` out of
+   `grubenv`, and the boot that takes the pending entry clears and saves it
+   first. This is the case where PenLive never runs again in between — the user
+   boots into Ubuntu, works, and restarts from inside Ubuntu. Nothing of ours
+   is running to clean up, so GRUB has to do it itself.
+2. **The manager deletes it on startup.** PenLive being up means the scheduled
+   boot either already happened or was passed over, so `nextboot.cfg` is
+   retired in the API lifespan (`services/bootmanager.clear_on_startup`). This
+   covers a `save_env` that failed on unusual firmware, and it is why the
+   selection can never accumulate across sessions. The file must predate the
+   running kernel to count as spent — `penlive-api` restarts itself on failure,
+   and wiping a boot the user scheduled a minute ago would be its own bug.
+
+There is deliberately no retry counter. A one-shot cannot loop, so counting
+attempts only added a way for the entry to disappear from the menu with an
+explanation the user never saw. `set fallback=boot_manager` handles the
+remaining case — an entry GRUB cannot load — by starting PenLive instead of
+dropping to a GRUB prompt.
 
 `recovery.cfg` is sourced unconditionally **at the end** of `grub.cfg`, after
 all the pending-boot logic, precisely so it stays reachable if anything before
 it fails.
+
+### GRUB's modules live on PENSYS
+
+`$prefix` is pinned to `($root)/grub` at the top of `grub.cfg`, before the
+first `insmod`, and the builder copies `/usr/lib/grub/x86_64-efi/*.mod` there
+alongside the config.
+
+This is not housekeeping. Debian's signed `grubx64.efi` carries a fixed
+built-in module set and loads anything else from `$prefix/x86_64-efi`, and
+**`exfat` is not in that set**. Its prefix starts as `/EFI/debian` on the ESP,
+where PenLive installs only the three-line stub, so `insmod exfat` looked in a
+directory that does not exist. What the user saw was three unrelated-looking
+messages in a row: `file exfat.mod not found`, then `no such device: PENDATA`
+(GRUB cannot identify an exFAT partition by label without the driver), then
+`no server is specified` from a GRUB that had fallen back to reading the path
+as a network address. None of the three mention the actual problem.
+
+Secure Boot still refuses to load unsigned modules, so this fixes the
+`chainload` method for machines with Secure Boot **off**. With it on, an image
+that can only be chainloaded genuinely cannot start from an exFAT partition,
+and the pending-boot banner says exactly that rather than letting the user find
+out from GRUB.
+
+### The menu ships in the squashfs too
+
+`prepare-storage.sh` reinstalls `grub.cfg` and `recovery.cfg` from
+`/opt/penlive/grub/` on every boot. Boot-logic fixes therefore reach an
+already-flashed stick with a squashfs update, instead of requiring the whole
+device to be rewritten, and a stick built with the older nested layout is
+lifted to the current one on its next start.
 
 ## Partitions
 
 | # | Label | FS | Size | Contents |
 |---|---|---|---|---|
 | 1 | `PENEFI` | FAT32 | 512 M | `EFI/BOOT/BOOTX64.EFI` |
-| 2 | `PENSYS` | ext4 | 4 G | `live/` + `boot/state/` + `boot/extracted/` + `boot/wimboot` |
+| 2 | `PENSYS` | ext4 | 4 G | `live/` + `grub/` + `state/` + `extracted/` + `wimboot` |
 | 3 | `persistence` | ext4 | 8 G | live-boot's OverlayFS |
-| 4 | `PENDATA` | exFAT | rest | `images/`, `windows/`, `catalog/`, `logs/` |
+| 4 | `PENDATA` | exFAT | rest | `images/`, `windows/`, `catalog/`, `logs/`, `vm-sessions/` |
 
 Four decisions worth explaining:
 
-**`boot/state` lives on PENSYS (ext4), not PENDATA (exFAT).** GRUB reads
+**`state/` lives on PENSYS (ext4), not PENDATA (exFAT).** GRUB reads
 `nextboot.cfg` straight off the raw partition, before Linux or OverlayFS
 exist. GRUB's ext4 support is far better tested than its exfat support, and the
 entire boot chain is not worth risking on that.
@@ -107,6 +186,24 @@ by Canonical or Red Hat - is refused. Rather than telling the user to give up
 on Secure Boot, PenLive uses the mechanism Secure Boot provides for exactly
 this: a machine owner key, enrolled once through MokManager, then used to
 counter-sign each extracted kernel.
+
+None of that is presented as a decision. Pressing Boot creates the key, queues
+it and signs the kernel; the confirmation dialog carries the digits MokManager
+will ask for, and that is the user's whole involvement.
+
+The pending-boot banner repeats it, and that repetition is the point. The
+firmware enforces its rules after PenLive is gone: a user who restarts, meets
+the blue MOK screen, does not know the code and presses Continue lands on
+`error: bad shim signature` followed by `you need to load the kernel first` —
+on a black screen, with nothing to work backwards from and no way to look the
+answer up. Anything the firmware will still ask for has to be on the screen
+they are looking at *before* they press Restart, not only in a dialog they have
+already dismissed. Making it a
+prerequisite - refusing the boot and pointing at a Settings panel - asked
+someone to authorise a mechanism they have no basis to reason about, in order
+to do the thing they had just asked for. The Settings panel remains as a status
+readout and as the place to re-read the code, since MokManager prompts for it
+at a screen that appears before PenLive is running.
 
 `sbsign` appends rather than replaces, so the vendor's signature survives and
 nothing is forged - the added claim is "the owner of this machine also vouches
@@ -294,7 +391,7 @@ first one to answer "maybe". A test covers exactly that conflict.
 Two output methods:
 
 - **`linux`** — extracts kernel/initrd from the ISO into
-  `PENSYS/boot/extracted/<id>/` and builds a `menuentry` that hands the
+  `PENSYS/extracted/<id>/` and builds a `menuentry` that hands the
   original ISO to the target OS as its root via `findiso=`,
   `iso-scan/filename=`, `inst.stage2=` and so on. Far more predictable than
   chainloading, because it does not depend on the ISO's own bootloader.
@@ -378,14 +475,110 @@ The VM tab can expand over the whole kiosk; `Ctrl+Alt+F` or the toolbar
 revealed at the top returns to the normal interface without restarting the
 guest.
 
+### Which drive is a whole drive
+
+sysfs answers that, not `lsblk`: every block device has a directory under
+`/sys/class/block`, and only a partition has a `partition` file in it. The
+check used to be "lsblk printed exactly one device and its path string equals
+ours", which conflated three different things — whether the device is a drive,
+whether lsblk's view is current, and whether two tools spell the same path the
+same way. Any disagreement came back as *could not confirm that /dev/sda is one
+whole disk*, which named nothing the user could act on and was usually not
+about the drive at all. lsblk is still what supplies labels, mount points and
+stacked layers; it just no longer gets to decide what the device is.
+
+Two more things about `lsblk` are worth knowing before reading its JSON:
+boolean columns (`RM`, `RO`) are only real JSON booleans from util-linux 2.38
+— before that they are the strings `"0"` and `"1"`, and `bool("0")` is `True`,
+which marks every drive read-only and empties the picker that filters those
+out. And `MOUNTPOINTS` (plural) arrived in 2.37, so the older singular column
+is tried before concluding a drive cannot be inspected.
+
+### Saved sessions: suspending a guest to the stick
+
+QEMU already knows how to serialise a running machine — that is what live
+migration is. Pointing a migration at a local file instead of another host
+gives suspend-to-disk: RAM, CPU and device state become one stream on PENDATA,
+and `-incoming` on an identically configured QEMU reads it back with the guest
+carrying on mid-sentence. **Save & suspend** does that and shuts the VM down;
+the session survives restarting the notebook, which is the entire point, since
+a live environment with terminals open and work in progress otherwise dies with
+the session.
+
+Three consequences shape the implementation:
+
+* **The destination must match the source.** `session.json` records memory, CPU
+  count, KVM and the ISO, and resuming rebuilds that command line rather than
+  honouring whatever the caller asked for. A stream loaded into a differently
+  sized machine does not fail politely — it fails inside the kernel it just
+  restored.
+* **Block devices are re-opened, not restored.** For the read-only ISO that is
+  exactly right, and the ISO's size is recorded so a re-download invalidates the
+  session instead of resuming a guest against a disk that changed underneath it.
+  For a real drive it is not right at all, so a VM holding one is refused: the
+  drive can change while the guest sleeps, and it would wake up writing on top
+  of a filesystem it believes it still owns.
+* **It is minutes of writing.** Guest memory goes through `zstd` (falling back
+  to `gzip`) and the request returns immediately, with progress polled from
+  `GET /api/vm/sessions`. Free space is checked against guest RAM up front:
+  filling PENDATA and failing at 90% costs the session, the space and the time.
+
+Resuming consumes the session — but only once the guest is actually running, so
+a resume that falls over leaves the stream to try again. An interrupted save
+leaves a `.part` file that nothing can read, which the API sweeps at startup;
+on a stick where space is why saves fail, leaving gigabytes of it behind makes
+the next attempt fail too.
+
+**A thawed guest has to be told to run.** QEMU restores the runstate the source
+had, and the source is deliberately paused before being written out — so a
+destination left to itself comes up fully loaded and *stopped*, showing the
+frozen last frame and never moving again. From the outside that is
+indistinguishable from a resume that did not work at all, which is exactly how
+it was first reported. `finish_incoming` waits on `query-status` (defined at
+every moment, where the incoming migration record is not yet populated in the
+first instants) and then issues `cont`.
+
+That wait runs in a background task, behind a `restoring` flag on the VM
+status. Reading a compressed guest back off a USB stick is tens of seconds at
+best, the display answers long before the machine inside it does, and a request
+held open for it would time out. While the flag is set the VM tab says the
+session is being read back, and noVNC keeps retrying instead of concluding
+after five attempts that the machine has stopped.
+
+### One machine at a time
+
+`start()` stops whatever else is running first, and every lookup goes through
+`_live()`, which forgets an entry whose process has exited.
+
+Both halves were real failures. Starting a second VM used to leave the first
+one running with nothing on screen pointing at it — invisible, holding its
+display and its memory — and then refusing to start it again with *"a VM for X
+is already running"* about a machine the user had no way to see or stop. The UI
+can only ever show one machine, so more than one running is not a feature with
+a missing interface; it is a leak.
+
+The one thing that is *not* interrupted is a session being written out: a save
+half-way through is a truncated stream and a lost session, so starting a
+machine while one is saving is refused with a reason rather than silently
+costing the user the save.
+
 ## Runtime storage ownership
 
-PENSYS does not exist while the squashfs is built, so its `boot/state` and
-`boot/extracted` directories originally arrived owned by root. The
+PENSYS does not exist while the squashfs is built, so its `state/` and
+`extracted/` directories originally arrived owned by root. The
 `penlive-storage` one-shot runs after fstab/first-boot expansion and before the
 daemon, aria2 and API, creating those runtime directories and granting the
 unprivileged manager only the write access it needs. This allows adapter
 extraction and native Boot without running ISO parsing as root.
+
+PENSYS is four gigabytes, most of it the live squashfs, so `extracted/` holds
+exactly one image: the one currently scheduled. Extraction happens when Boot is
+pressed and prunes everything else first. Extracting for every download instead
+filled the partition, and a full ext4 that then records a write error remounts
+itself read-only — after which every subsequent Boot failed with a storage
+error that had nothing to do with the ISO being booted. Post-download
+inspection is therefore detection only: it parses the ISO directory and writes
+nothing to PENSYS.
 
 ## Catalog
 

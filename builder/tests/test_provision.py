@@ -33,8 +33,8 @@ def test_dry_run_plan_covers_the_whole_install(tmp_path):
     assert "grub-mkstandalone" in history
     assert "BOOTX64.EFI" in history
     assert "filesystem.squashfs" in history
-    assert "grub-editenv" in history and "boot_attempts=0" in history
-    assert str(Path("boot") / "grub" / "grubenv") in history
+    assert "grub-editenv" in history and "next_entry=" in history
+    assert str(Path("bootsys") / "grub" / "grubenv") in history
     assert "mount -t vfat /dev/sdb1" in history
     assert "mount -t ext4 /dev/sdb2" in history
     assert "mount -t ext4 /dev/sdb3" in history

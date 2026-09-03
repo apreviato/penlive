@@ -87,6 +87,9 @@ qemu-system-x86
 qemu-utils
 ovmf
 acl
+# Saving a VM session writes the whole of guest memory to the stick; zstd turns
+# minutes of USB writing into seconds of CPU. gzip (essential) is the fallback.
+zstd
 
 # --- diagnostics / recovery ---
 smartmontools
