@@ -11,6 +11,7 @@ from isofactory import (
     DEBIAN_LIVE_FILES,
     DEBIAN_LIVE_WITH_INSTALLER_FILES,
     FEDORA_FILES,
+    FEDORA_LIVE_FILES,
     GENERIC_EFI_FILES,
     PROXMOX_FILES,
     UBUNTU_FILES,
@@ -74,6 +75,37 @@ def test_prepare_debian_uses_findiso(tmp_path):
     assert "boot=live" in cfg.cmdline
     assert "findiso=/images/debian.iso" in cfg.cmdline
     assert "live-media=/dev/disk/by-label/PENDATA" in cfg.cmdline
+
+
+def test_prepare_fedora_live_uses_the_iso_label_and_file_path(tmp_path):
+    iso_path = build_iso(
+        tmp_path / "fedora-live.iso",
+        FEDORA_LIVE_FILES,
+        joliet=False,
+        volume_identifier="Fedora-WS-Live-42-1-1",
+    )
+    _, cfg = prepare_boot(iso_path, tmp_path / "ex", "images/fedora-live.iso")
+
+    assert "root=live:CDLABEL=Fedora-WS-Live-42-1-1" in cfg.cmdline
+    assert "rd.live.image" in cfg.cmdline
+    assert "iso-scan/filename=/images/fedora-live.iso" in cfg.cmdline
+    assert "inst.stage2=" not in cfg.cmdline
+
+
+def test_prepare_fedora_installer_keeps_anaconda_stage2(tmp_path):
+    iso_path = build_iso(tmp_path / "fedora-installer.iso", FEDORA_FILES)
+    _, cfg = prepare_boot(iso_path, tmp_path / "ex", "images/fedora-installer.iso")
+
+    assert "inst.stage2=hd:LABEL=PENDATA:/images/fedora-installer.iso" in cfg.cmdline
+    assert "root=live:" not in cfg.cmdline
+
+
+def test_iso_volume_identifier_is_exposed_without_padding(tmp_path):
+    iso_path = build_iso(
+        tmp_path / "label.iso", FEDORA_FILES, volume_identifier="Fedora Label"
+    )
+    with IsoImage(iso_path) as iso:
+        assert iso.volume_identifier == "Fedora Label"
 
 
 def test_prepare_generic_produces_chainload_without_extracting(tmp_path):

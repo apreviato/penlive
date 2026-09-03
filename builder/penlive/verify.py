@@ -8,7 +8,7 @@ REQUIRED_PENSYS_FILES = (
     "live/initrd.img",
     "live/filesystem.squashfs",
     "boot/grub/grub.cfg",
-    "boot/state/bootenv",
+    "boot/grub/grubenv",
 )
 REQUIRED_EFI_FILES = ("EFI/BOOT/BOOTX64.EFI",)
 # Present only on a signed (Secure Boot capable) build; their absence is not a

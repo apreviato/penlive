@@ -93,6 +93,14 @@ class IsoImage:
                 continue
         return None
 
+    @property
+    def volume_identifier(self) -> str:
+        """ISO9660 volume label used by live initrds to find their root media."""
+        raw = self._iso.pvd.volume_identifier
+        if isinstance(raw, bytes):
+            return raw.decode("ascii", errors="replace").rstrip(" \x00")
+        return str(raw).rstrip(" \x00")
+
     def walk_udf(self) -> list[tuple[str, list[str], list[str]]]:
         """os.walk-style listing of the UDF tree, empty when there is none.
 

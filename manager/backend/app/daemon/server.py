@@ -9,6 +9,7 @@ allows. Linux-only: imports grp and calls systemctl/mount/dd directly.
 from __future__ import annotations
 
 import asyncio
+import errno
 import logging
 import os
 import shutil
@@ -181,27 +182,67 @@ async def handle_umount_device(args: dict) -> dict:
 async def handle_write_nextboot(args: dict) -> dict:
     """Atomically publish the pending-boot menuentry GRUB will source next boot."""
     _require_pensys_mount()
-    try:
-        paths.STATE_DIR.mkdir(parents=True, exist_ok=True)
-        tmp_cfg = paths.NEXTBOOT_CFG.with_suffix(".cfg.tmp")
-        tmp_json = paths.NEXTBOOT_JSON.with_suffix(".json.tmp")
-        _write_durable(tmp_cfg, args["cfg_text"])
-        _write_durable(tmp_json, args["json_text"])
-        tmp_cfg.replace(paths.NEXTBOOT_CFG)
-        tmp_json.replace(paths.NEXTBOOT_JSON)
-        _fsync_directory(paths.STATE_DIR)
-    except OSError as exc:
-        raise RuntimeError(
-            f"could not write {paths.NEXTBOOT_CFG}: {exc.strerror or exc}. "
-            "The PENSYS partition may be mounted read-only or out of space."
-        ) from exc
+    for attempt in range(2):
+        try:
+            _publish_nextboot(args["cfg_text"], args["json_text"])
+            break
+        except OSError as exc:
+            recoverable = exc.errno in {errno.EROFS, errno.EACCES, errno.EPERM}
+            if attempt == 0 and recoverable and not paths.DEV_MODE:
+                # PENSYS commonly protects itself after an unclean unplug.
+                # Repair the mount here as well as during kernel extraction:
+                # cached extracted files otherwise let preparation succeed and
+                # leave the final nextboot write as the first visible failure.
+                await handle_remount_boot_rw({})
+                _require_pensys_mount()
+                continue
+            _discard_pending_boot_best_effort()
+            raise RuntimeError(
+                f"could not write {paths.NEXTBOOT_CFG}: {exc.strerror or exc}. "
+                "The PENSYS system partition may still be read-only, damaged, or out of space; "
+                "free download space on PENDATA is a separate partition."
+            ) from exc
 
     warning = _reset_boot_attempts(arm_pending=True)
     if warning:
-        paths.NEXTBOOT_CFG.unlink(missing_ok=True)
-        paths.NEXTBOOT_JSON.unlink(missing_ok=True)
+        _discard_pending_boot_best_effort()
         raise RuntimeError(f"could not arm the selected ISO for the next boot: {warning}")
     return {"warning": None}
+
+
+def _publish_nextboot(cfg_text: str, json_text: str) -> None:
+    """Replace any older selection; a failed replacement leaves none armed."""
+    paths.STATE_DIR.mkdir(parents=True, exist_ok=True)
+    tmp_cfg = paths.NEXTBOOT_CFG.with_suffix(".cfg.tmp")
+    tmp_json = paths.NEXTBOOT_JSON.with_suffix(".json.tmp")
+
+    # There is exactly one pending slot. Clearing it before publishing means a
+    # failure while selecting Fedora cannot silently retain the previously
+    # selected Debian entry behind the error dialog.
+    paths.NEXTBOOT_CFG.unlink(missing_ok=True)
+    paths.NEXTBOOT_JSON.unlink(missing_ok=True)
+    try:
+        _write_durable(tmp_cfg, cfg_text)
+        _write_durable(tmp_json, json_text)
+        tmp_cfg.replace(paths.NEXTBOOT_CFG)
+        tmp_json.replace(paths.NEXTBOOT_JSON)
+        _fsync_directory(paths.STATE_DIR)
+    except OSError:
+        _discard_pending_boot_best_effort()
+        raise
+
+
+def _discard_pending_boot_best_effort() -> None:
+    for path in (
+        paths.NEXTBOOT_CFG.with_suffix(".cfg.tmp"),
+        paths.NEXTBOOT_JSON.with_suffix(".json.tmp"),
+        paths.NEXTBOOT_CFG,
+        paths.NEXTBOOT_JSON,
+    ):
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def _require_pensys_mount() -> None:
@@ -232,8 +273,21 @@ def _require_pensys_mount() -> None:
 
 
 async def handle_clear_nextboot(args: dict) -> dict:
-    paths.NEXTBOOT_CFG.unlink(missing_ok=True)
-    paths.NEXTBOOT_JSON.unlink(missing_ok=True)
+    if not paths.DEV_MODE:
+        _require_pensys_mount()
+    for attempt in range(2):
+        try:
+            paths.NEXTBOOT_CFG.unlink(missing_ok=True)
+            paths.NEXTBOOT_JSON.unlink(missing_ok=True)
+            if paths.STATE_DIR.exists():
+                _fsync_directory(paths.STATE_DIR)
+            break
+        except OSError as exc:
+            recoverable = exc.errno in {errno.EROFS, errno.EACCES, errno.EPERM}
+            if attempt == 0 and recoverable and not paths.DEV_MODE:
+                await handle_remount_boot_rw({})
+                continue
+            raise RuntimeError(f"could not clear the previous boot selection: {exc}") from exc
     return {"warning": _reset_boot_attempts(arm_pending=False)}
 
 

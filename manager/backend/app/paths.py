@@ -35,7 +35,10 @@ STATE_DIR = BOOT_MOUNT / "state"
 EXTRACTED_DIR = BOOT_MOUNT / "extracted"
 NEXTBOOT_CFG = STATE_DIR / "nextboot.cfg"
 NEXTBOOT_JSON = STATE_DIR / "nextboot.json"
-BOOTENV = STATE_DIR / "bootenv"
+# Keep GRUB's environment at its conventional location under $prefix. Some
+# signed/removable-media GRUB builds are less reliable with a custom `-f`
+# environment path even though the command syntax exists.
+BOOTENV = BOOT_MOUNT / "grub" / "grubenv"
 
 IMAGES_DIR = DATA_MOUNT / "images"
 DOWNLOADS_TMP_DIR = IMAGES_DIR / ".downloads"

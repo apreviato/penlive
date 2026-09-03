@@ -9,19 +9,22 @@ if mountpoint -q /boot; then
         chown -R penlive:penlive "$path"
         chmod 0775 "$path"
     done
+    mkdir -p /boot/grub
 
     # Images made by early PenLive builds did not always carry this file, and
     # an interrupted ext4 repair can leave it invalid. Native boot only needs a
     # standard 1 KiB GRUB environment block, so repair it during startup. Use
     # an atomic rename so firmware can never observe a half-created block.
-    if ! grub-editenv /boot/state/bootenv list >/dev/null 2>&1; then
-        rm -f /boot/state/.bootenv.tmp
-        grub-editenv /boot/state/.bootenv.tmp create
-        grub-editenv /boot/state/.bootenv.tmp set boot_attempts=0 next_entry=
-        mv -f /boot/state/.bootenv.tmp /boot/state/bootenv
+    if ! grub-editenv /boot/grub/grubenv list >/dev/null 2>&1; then
+        rm -f /boot/grub/.grubenv.tmp
+        grub-editenv /boot/grub/.grubenv.tmp create
+        grub-editenv /boot/grub/.grubenv.tmp set boot_attempts=0 next_entry=
+        mv -f /boot/grub/.grubenv.tmp /boot/grub/grubenv
     fi
-    chown penlive:penlive /boot/state/bootenv
-    chmod 0664 /boot/state/bootenv
+    # Only the privileged daemon and GRUB need to change this file. The API
+    # can still inspect it through grub-editenv because it is world-readable.
+    chown root:root /boot/grub/grubenv
+    chmod 0644 /boot/grub/grubenv
 fi
 
 if mountpoint -q /data; then

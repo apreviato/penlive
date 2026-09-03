@@ -18,7 +18,9 @@ export default function PendingBootBanner({ pending, onClear, onReboot }) {
             <strong>{pending.image_name}</strong>{' '}
             {pending.attempts > 0
               ? `did not take over the previous boot (attempt ${pending.attempts} of ${pending.max_attempts}). You can retry it.`
-              : 'is scheduled for the next boot.'}
+              : 'is scheduled for the next boot.'}{' '}
+            If this computer requires F12, select the USB drive there; PenLive will then highlight
+            this system in its boot menu.
           </>
         )}
       </span>

@@ -13,14 +13,26 @@ from pathlib import Path
 import pycdlib
 
 
-def build_iso(dest: Path, files: dict[str, bytes], *, joliet: bool = True, rock_ridge: str | None = "1.09") -> Path:
+def build_iso(
+    dest: Path,
+    files: dict[str, bytes],
+    *,
+    joliet: bool = True,
+    rock_ridge: str | None = "1.09",
+    volume_identifier: str = "",
+) -> Path:
     """Create an ISO at `dest` containing `files` (ISO-absolute path -> content).
 
     interchange_level=3 because real distro filenames (`initramfs-linux.img`)
     exceed the 8.3 limit that level 1 enforces.
     """
     iso = pycdlib.PyCdlib()
-    iso.new(interchange_level=3, joliet=3 if joliet else None, rock_ridge=rock_ridge)
+    iso.new(
+        interchange_level=3,
+        joliet=3 if joliet else None,
+        rock_ridge=rock_ridge,
+        vol_ident=volume_identifier,
+    )
 
     made_dirs: set[str] = set()
     for path, content in files.items():
@@ -85,6 +97,11 @@ DEBIAN_LIVE_FILES = {
 FEDORA_FILES = {
     "/images/pxeboot/vmlinuz": b"fake-fedora-kernel",
     "/images/pxeboot/initrd.img": b"fake-fedora-initrd",
+}
+
+FEDORA_LIVE_FILES = {
+    **FEDORA_FILES,
+    "/LiveOS/squashfs.img": b"fake-fedora-live-root",
 }
 
 ARCH_FILES = {

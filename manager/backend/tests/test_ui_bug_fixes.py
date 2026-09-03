@@ -238,6 +238,67 @@ async def test_write_nextboot_reports_a_read_only_pensys(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_write_nextboot_remounts_read_only_pensys_and_retries(tmp_path, monkeypatch):
+    from app.daemon import server
+
+    state = tmp_path / "state"
+    state.mkdir()
+    monkeypatch.setattr(paths, "DEV_MODE", False)
+    monkeypatch.setattr(paths, "STATE_DIR", state)
+    monkeypatch.setattr(paths, "NEXTBOOT_CFG", state / "nextboot.cfg")
+    monkeypatch.setattr(paths, "NEXTBOOT_JSON", state / "nextboot.json")
+    monkeypatch.setattr(server, "_require_pensys_mount", lambda: None)
+    monkeypatch.setattr(server, "_reset_boot_attempts", lambda **_kwargs: None)
+    monkeypatch.setattr(server, "_fsync_directory", lambda _path: None)
+    attempts = {"writes": 0, "remounts": 0}
+    real_publish = server._publish_nextboot
+
+    def flaky_publish(cfg_text, json_text):
+        attempts["writes"] += 1
+        if attempts["writes"] == 1:
+            raise OSError(30, "Read-only file system")
+        real_publish(cfg_text, json_text)
+
+    async def remount(_args):
+        attempts["remounts"] += 1
+        return {"remounted": "/boot"}
+
+    monkeypatch.setattr(server, "_publish_nextboot", flaky_publish)
+    monkeypatch.setattr(server, "handle_remount_boot_rw", remount)
+
+    result = await server.handle_write_nextboot({"cfg_text": "new", "json_text": "{}"})
+
+    assert result == {"warning": None}
+    assert attempts == {"writes": 2, "remounts": 1}
+    assert paths.NEXTBOOT_CFG.read_text() == "new"
+
+
+def test_failed_replacement_cannot_leave_the_previous_iso_armed(tmp_path, monkeypatch):
+    from app.daemon import server
+
+    state = tmp_path / "state"
+    state.mkdir()
+    old_cfg = state / "nextboot.cfg"
+    old_json = state / "nextboot.json"
+    old_cfg.write_text("old Fedora entry", encoding="utf-8")
+    old_json.write_text('{"image_id":"old"}', encoding="utf-8")
+    monkeypatch.setattr(paths, "STATE_DIR", state)
+    monkeypatch.setattr(paths, "NEXTBOOT_CFG", old_cfg)
+    monkeypatch.setattr(paths, "NEXTBOOT_JSON", old_json)
+
+    def fail_write(*_args, **_kwargs):
+        raise OSError(5, "I/O error")
+
+    monkeypatch.setattr(server, "_write_durable", fail_write)
+
+    with pytest.raises(OSError, match="I/O error"):
+        server._publish_nextboot("new Debian entry", '{"image_id":"new"}')
+
+    assert not old_cfg.exists()
+    assert not old_json.exists()
+
+
+@pytest.mark.asyncio
 async def test_write_nextboot_durably_arms_grub_one_shot(tmp_path, monkeypatch):
     import subprocess
 

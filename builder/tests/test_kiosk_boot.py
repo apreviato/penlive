@@ -144,8 +144,8 @@ def test_runtime_storage_is_writable_by_the_unprivileged_manager():
     hook = (ROOT / "live" / "config" / "hooks" / "live" / "0300-enable-services.hook.chroot").read_text()
     assert "/boot/extracted" in script
     assert "chown -R penlive:penlive" in script
-    assert "grub-editenv /boot/state/.bootenv.tmp create" in script
-    assert "mv -f /boot/state/.bootenv.tmp /boot/state/bootenv" in script
+    assert "grub-editenv /boot/grub/.grubenv.tmp create" in script
+    assert "mv -f /boot/grub/.grubenv.tmp /boot/grub/grubenv" in script
     assert "Before=penlive-daemon.service penlive-aria2.service penlive-api.service" in unit
     assert "RequiresMountsFor=/boot /data" in unit
     assert "systemctl enable penlive-storage.service" in hook
@@ -166,9 +166,13 @@ def test_pending_boot_uses_grubs_one_shot_entry():
 
     assert 'if [ "x$next_entry" = "xpending_boot" ]' in config
     assert "set default=pending_boot" in config
-    assert "set timeout=0" in config
+    assert "set timeout=2" in config
+    assert "set timeout_style=menu" in config
     assert "set next_entry=" in config
     assert "boot_attempts next_entry" in config
+    assert "load_env -f" not in config
+    assert "save_env -f" not in config
+    assert "$prefix/grubenv" in config
 
 
 def test_power_services_have_bounded_stop_times():

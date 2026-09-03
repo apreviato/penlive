@@ -76,6 +76,7 @@ def test_embedded_config_targets_the_pensys_label():
     later without rebuilding it, so the label it searches for must match the
     one the builder writes."""
     assert "--label PENSYS" in grubinstall.EMBEDDED_CFG
+    assert "set prefix=($root)/boot/grub" in grubinstall.EMBEDDED_CFG
     assert "configfile" in grubinstall.EMBEDDED_CFG
 
 

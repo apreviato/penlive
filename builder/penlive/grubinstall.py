@@ -153,7 +153,10 @@ def install_bootsys_files(
     if wimboot is not None:
         runner.run(["install", "-m", "0644", str(wimboot), str(bootsys_mount / "boot" / "wimboot")])
 
-    bootenv = state_dir / "bootenv"
+    # Use GRUB's conventional $prefix/grubenv. Besides working with the stock
+    # load_env/save_env flow, this is more compatible with signed EFI builds
+    # than an environment block at a custom path.
+    bootenv = grub_dir / "grubenv"
     runner.run(["grub-editenv", str(bootenv), "create"])
     runner.run(["grub-editenv", str(bootenv), "set", "boot_attempts=0"])
 

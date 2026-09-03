@@ -73,7 +73,7 @@ single in-memory cpio archive using GRUB's `newc:<name>:<path>` syntax. See
 | `ubuntu` | `/casper/vmlinuz` | 95 | `boot=casper iso-scan/filename=` |
 | `debian` | `/live/vmlinuz` | 90 | `boot=live findiso=` |
 | `proxmox` | `/boot/linux26` | 90 | `ro ramdisk_size=... findiso=` |
-| `fedora` | `/images/pxeboot/vmlinuz` | 85 | `inst.stage2=hd:LABEL=PENDATA:` |
+| `fedora` | `/images/pxeboot/vmlinuz` | 85 | Live: `root=live:CDLABEL=... rd.live.image iso-scan/filename=`; installer: `inst.stage2=hd:LABEL=PENDATA:` |
 | `arch` | `/arch/boot/x86_64/vmlinuz-linux` | 85 | `img_dev=... img_loop=` |
 | `debian-installer` | `/install.amd/vmlinuz` | 80 | `iso-scan/filename=` |
 | `windows` | `/sources/boot.wim` | 90 | wimboot (see below) |
@@ -84,6 +84,11 @@ one: Linux Mint is Ubuntu-derived and uses the casper layout; Rocky Linux and
 AlmaLinux are RHEL-family with the Anaconda `/images/pxeboot` layout; and
 Clonezilla Live and GParted Live are built with `live-build`, so the Debian
 adapter boots them unchanged.
+
+Fedora uses the same kernel path for Workstation Live and installer media, but
+their initrds expect different arguments. The adapter distinguishes them by
+`/LiveOS/squashfs.img`; Live media receives its ISO9660 volume label plus the
+ISO file path, while installer media keeps Anaconda's `inst.stage2` argument.
 
 SystemRescue and openSUSE match none of them and fall back to
 `GenericEfiAdapter`. Chainloading a loopback-mounted ISO is best-effort — the
